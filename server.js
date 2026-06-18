@@ -26,39 +26,49 @@ app.use(express.static(__dirname));
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 
 function carregarConfig() {
+  let cfg;
   try {
     if (fs.existsSync(CONFIG_PATH)) {
-      return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+      cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
     }
   } catch (e) {
     console.error('Erro ao ler config:', e.message);
   }
-  return {
-    moedas: [],
-    carteira: [],
-    intervaloMs: 60000,
-    telegram: {
-      token: process.env.TELEGRAM_TOKEN || '',
-      chatId: process.env.TELEGRAM_CHAT_ID || '',
-    },
-    admin: {
-      // Primeiro acesso define a senha do admin-mestre. Enquanto não
-      // configurado, qualquer um pode reivindicar (primeiro a chegar vira dono).
-      configurado: false,
-      adminMestre: '',          // email do dono
-      admins: [],               // [{ email, senha, mestre:bool }]
-      monetizacaoAtiva: false,  // desligada por padrão
-      analisesGratis: 1,
-      planos: [
-        { id: 'semanal', nome: 'Semanal', preco: 19.90, dias: 7 },
-        { id: 'quinzenal', nome: 'Quinzenal', preco: 34.90, dias: 15 },
-        { id: 'mensal', nome: 'Mensal', preco: 49.90, dias: 30 },
-      ],
-    },
-    // Assinantes — só e-mail e plano (sem CPF/telefone por escolha de design)
-    // OBS: em produção real isto vai para um banco de dados seguro.
-    assinantes: [],
-  };
+  
+  if (!cfg) {
+    cfg = {
+      moedas: [],
+      carteira: [],
+      intervaloMs: 60000,
+      telegram: {
+        token: process.env.TELEGRAM_TOKEN || '',
+        chatId: process.env.TELEGRAM_CHAT_ID || '',
+      },
+      admin: {
+        configurado: false,
+        adminMestre: '',
+        admins: [],
+        monetizacaoAtiva: false,
+        analisesGratis: 1,
+        planos: [
+          { id: 'semanal', nome: 'Semanal', preco: 19.90, dias: 7 },
+          { id: 'quinzenal', nome: 'Quinzenal', preco: 34.90, dias: 15 },
+          { id: 'mensal', nome: 'Mensal', preco: 49.90, dias: 30 },
+        ],
+      },
+      assinantes: [],
+    };
+  }
+  
+  // RESET DE SEGURANÇA: se monetização ficou ligada (config antiga),
+  // força desligar para o app ficar funcional
+  if (cfg.admin && cfg.admin.monetizacaoAtiva === true) {
+    console.log('⚠️ Monetização estava ligada (config antiga) — desligando automaticamente...');
+    cfg.admin.monetizacaoAtiva = false;
+    salvarConfig(cfg);
+  }
+  
+  return cfg;
 }
 
 // Contagem simples de uso por sessão (em memória). Em produção real,
