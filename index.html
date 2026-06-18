@@ -851,6 +851,8 @@ async function salvarTelegram(){
 async function carregarMonetizacao(){
   try {
     monetizacao = await (await fetch(API+'/api/monetizacao')).json();
+    // FORÇA PAYWALL SEMPRE DESLIGADO — nunca mostra monetização
+    monetizacao.ativa = false;
   } catch(e){}
 }
 
