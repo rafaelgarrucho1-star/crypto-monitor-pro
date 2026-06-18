@@ -102,37 +102,35 @@ let listaMoedasTimestamp = 0;
 
 async function buscarListaMoedas() {
   const agora = Date.now();
+  // cache por 24 horas
   if (listaMoedas.length > 0 && agora - listaMoedasTimestamp < 86400000) {
     return listaMoedas;
   }
   try {
-    // Top 250 por market cap — cobre praticamente tudo que importa
+    // Top 250 moedas — uma página só para reduzir requisições
     const todas = [];
-    for (let pagina = 1; pagina <= 2; pagina++) {
-      const r = await axios.get(`${CG}/coins/markets`, {
-        params: {
-          vs_currency: 'usd',
-          order: 'market_cap_desc',
-          per_page: 250,
-          page: pagina,
-          sparkline: false,
-        },
-        timeout: 15000,
+    const r = await axios.get(`${CG}/coins/markets`, {
+      params: {
+        vs_currency: 'usd',
+        order: 'market_cap_desc',
+        per_page: 250,
+        page: 1,
+        sparkline: false,
+      },
+      timeout: 15000,
+    });
+    r.data.forEach((c) => {
+      todas.push({
+        id: c.id,
+        nome: c.name,
+        simbolo: c.symbol.toUpperCase(),
+        imagem: c.image,
+        rank: c.market_cap_rank,
       });
-      r.data.forEach((c) => {
-        todas.push({
-          id: c.id,
-          nome: c.name,
-          simbolo: c.symbol.toUpperCase(),
-          imagem: c.image,
-          rank: c.market_cap_rank,
-        });
-      });
-      await new Promise((r) => setTimeout(r, 1500)); // respeita rate limit
-    }
+    });
     listaMoedas = todas;
     listaMoedasTimestamp = agora;
-    console.log(`✅ Lista de ${todas.length} moedas carregada do CoinGecko`);
+    console.log(`✅ Lista de ${todas.length} moedas carregada (top 250)`);
   } catch (e) {
     console.error('Erro ao buscar lista de moedas:', e.message);
   }
@@ -142,17 +140,30 @@ async function buscarListaMoedas() {
 async function buscarPrecos(ids) {
   if (!ids.length) return {};
   try {
-    const r = await axios.get(`${CG}/simple/price`, {
-      params: {
-        ids: ids.join(','),
-        vs_currencies: 'usd',
-        include_market_cap: true,
-        include_24hr_vol: true,
-        include_24hr_change: true,
-      },
-      timeout: 15000,
-    });
-    return r.data;
+    // limita a 50 IDs por requisição para não exceder URL length
+    const chunks = [];
+    for (let i = 0; i < ids.length; i += 50) {
+      chunks.push(ids.slice(i, i + 50));
+    }
+    let resultado = {};
+    for (const chunk of chunks) {
+      const r = await axios.get(`${CG}/simple/price`, {
+        params: {
+          ids: chunk.join(','),
+          vs_currencies: 'usd',
+          include_market_cap: true,
+          include_24hr_vol: true,
+          include_24hr_change: true,
+        },
+        timeout: 15000,
+      });
+      resultado = { ...resultado, ...r.data };
+      // delay entre chunks para respeitar rate limit
+      if (chunks.indexOf(chunk) < chunks.length - 1) {
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+    }
+    return resultado;
   } catch (e) {
     console.error('Erro ao buscar preços:', e.message);
     return {};
