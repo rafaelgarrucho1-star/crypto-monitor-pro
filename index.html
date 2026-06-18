@@ -1,0 +1,1081 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crypto Monitor Pro</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f1116;color:#e6e8ec;min-height:100vh}
+  .topbar{background:#161922;border-bottom:1px solid #262b38;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+  .logo{font-size:20px;font-weight:700;color:#7c9eff;display:flex;align-items:center;gap:8px}
+  .status-pills{display:flex;gap:16px;font-size:13px;color:#9aa3b2;flex-wrap:wrap}
+  .pill{display:flex;align-items:center;gap:6px}
+  .dot{width:8px;height:8px;border-radius:50%;background:#3ddc84}
+  .dot.off{background:#6b7280}
+  .tabs{display:flex;gap:4px;padding:0 24px;background:#161922;border-bottom:1px solid #262b38;overflow-x:auto}
+  .tab{padding:14px 20px;cursor:pointer;color:#9aa3b2;font-size:14px;font-weight:600;border-bottom:2px solid transparent;white-space:nowrap}
+  .tab:hover{color:#e6e8ec}
+  .tab.ativa{color:#7c9eff;border-bottom-color:#7c9eff}
+  .container{max-width:1400px;margin:0 auto;padding:24px}
+  .grid{display:grid;grid-template-columns:320px 1fr;gap:24px}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  .panel{background:#161922;border:1px solid #262b38;border-radius:12px;padding:20px}
+  .panel h2{font-size:15px;color:#7c9eff;margin-bottom:16px;font-weight:700}
+  input,select{width:100%;padding:11px;background:#0f1116;border:1px solid #2c3340;border-radius:8px;color:#e6e8ec;font-size:14px;margin-bottom:10px}
+  input:focus,select:focus{outline:none;border-color:#7c9eff}
+  .lista-moedas{max-height:480px;overflow-y:auto}
+  .moeda-disp{display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;cursor:pointer;font-size:14px}
+  .moeda-disp:hover{background:#1e2330}
+  .moeda-disp img{width:24px;height:24px;border-radius:50%}
+  .moeda-disp .rank{margin-left:auto;font-size:11px;color:#6b7280}
+  .btn{padding:10px 16px;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;transition:.2s}
+  .btn-primary{background:#7c9eff;color:#0f1116}
+  .btn-primary:hover{background:#6b8cff}
+  .btn-danger{background:#2c1518;color:#ff6b7a;border:1px solid #4a2228}
+  .btn-danger:hover{background:#3a1a1f}
+  .btn-sm{padding:6px 12px;font-size:12px}
+  .card-moeda{background:#1a1e29;border:1px solid #2c3340;border-radius:12px;padding:18px;margin-bottom:16px}
+  .card-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px}
+  .card-head .nome{font-size:17px;font-weight:700;display:flex;align-items:center;gap:8px}
+  .card-head img{width:28px;height:28px;border-radius:50%}
+  .preco{font-size:24px;font-weight:700;margin:4px 0}
+  .var{font-size:13px;font-weight:600}
+  .var.pos{color:#3ddc84}.var.neg{color:#ff6b7a}
+  .indicadores{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin:14px 0}
+  .ind{background:#0f1116;border:1px solid #262b38;border-radius:8px;padding:10px;text-align:center}
+  .ind .lbl{font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:.5px}
+  .ind .val{font-size:15px;font-weight:700;margin-top:4px}
+  .score-bar{height:8px;background:#262b38;border-radius:4px;overflow:hidden;margin:8px 0}
+  .score-fill{height:100%;transition:width .5s}
+  .badge{display:inline-block;padding:5px 12px;border-radius:20px;font-size:12px;font-weight:700}
+  .badge.compra{background:#0e2a1a;color:#3ddc84}
+  .badge.venda{background:#2c1518;color:#ff6b7a}
+  .badge.neutro{background:#262b38;color:#9aa3b2}
+  .sinais{margin-top:12px}
+  .sinal{display:flex;gap:8px;padding:7px 0;font-size:13px;border-top:1px solid #20242f}
+  .sinal .tag{font-size:10px;padding:2px 7px;border-radius:4px;font-weight:700;height:fit-content}
+  .sinal .tag.compra{background:#0e2a1a;color:#3ddc84}
+  .sinal .tag.venda{background:#2c1518;color:#ff6b7a}
+  .sinal .tag.neutro{background:#262b38;color:#9aa3b2}
+  .vazio{text-align:center;color:#6b7280;padding:50px 20px;font-size:14px}
+  .alerta-cfg{background:#0f1116;border:1px solid #262b38;border-radius:8px;padding:12px;margin-top:12px}
+  .alerta-item{display:flex;justify-content:space-between;align-items:center;background:#0f1116;border-left:3px solid #7c9eff;padding:8px 12px;border-radius:6px;margin-bottom:6px;font-size:12px}
+  .disclaimer{background:#2a2410;border:1px solid #4a3f1a;border-radius:8px;padding:12px;font-size:12px;color:#d4c373;margin-top:14px;line-height:1.5}
+  .fib-tabela{width:100%;font-size:12px;border-collapse:collapse;margin-top:10px}
+  .fib-tabela td{padding:6px 10px;border-bottom:1px solid #20242f}
+  .fib-tabela .nivel{color:#9aa3b2}
+  .fib-tabela .preco-fib{text-align:right;font-weight:600}
+  .fib-zona{background:#1a2030;border:1px solid #2c4a7c}
+  .grafico-controles{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+  .periodo-btn{padding:7px 14px;background:#1a1e29;border:1px solid #2c3340;border-radius:6px;cursor:pointer;font-size:12px;color:#9aa3b2}
+  .periodo-btn.ativo{background:#7c9eff;color:#0f1116;border-color:#7c9eff}
+  .alerta-hist{background:#1a1e29;border-left:3px solid #7c9eff;padding:12px;border-radius:6px;margin-bottom:8px;font-size:13px}
+  .alerta-hist .hora{font-size:11px;color:#6b7280;margin-top:4px}
+  .telegram-passos{line-height:1.8;font-size:13px;color:#c0c6d0}
+  .telegram-passos code{background:#0f1116;padding:2px 6px;border-radius:4px;color:#7c9eff}
+  .esconde{display:none}
+  label{font-size:12px;color:#9aa3b2;display:block;margin-bottom:5px;margin-top:8px}
+  .bench-box{background:#0f1116;border:1px solid #262b38;border-radius:8px;padding:6px 14px}
+  .bench-linha{display:flex;justify-content:space-between;padding:9px 0;font-size:14px;border-bottom:1px solid #20242f}
+  .bench-linha:last-child{border-bottom:none}
+  .barra-disclaimer{background:#2a2410;border-bottom:1px solid #4a3f1a;color:#d4c373;font-size:12px;text-align:center;padding:8px 16px;line-height:1.4}
+  .paywall{position:fixed;inset:0;background:rgba(15,17,22,.92);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px}
+  .paywall-box{background:#161922;border:1px solid #262b38;border-radius:16px;padding:32px;max-width:540px;width:100%;text-align:center}
+  .paywall-box h2{color:#7c9eff;font-size:22px;margin-bottom:8px}
+  .planos{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:24px 0}
+  @media(max-width:560px){.planos{grid-template-columns:1fr}}
+  .plano{background:#1a1e29;border:1px solid #2c3340;border-radius:12px;padding:18px;cursor:pointer;transition:.2s}
+  .plano:hover{border-color:#7c9eff;transform:translateY(-2px)}
+  .plano.destaque{border-color:#7c9eff;box-shadow:0 0 0 1px #7c9eff}
+  .plano .pnome{font-size:13px;color:#9aa3b2}
+  .plano .ppreco{font-size:24px;font-weight:700;margin:6px 0;color:#e6e8ec}
+  .plano .pdia{font-size:11px;color:#3ddc84}
+  .plano .ptag{font-size:10px;background:#7c9eff;color:#0f1116;padding:2px 8px;border-radius:10px;font-weight:700;display:inline-block;margin-top:6px}
+  .admin-card{background:#1a1e29;border:1px solid #2c3340;border-radius:12px;padding:20px;margin-bottom:16px}
+  .switch{position:relative;display:inline-block;width:48px;height:26px}
+  .switch input{opacity:0;width:0;height:0}
+  .slider{position:absolute;cursor:pointer;inset:0;background:#2c3340;border-radius:26px;transition:.3s}
+  .slider:before{content:"";position:absolute;height:20px;width:20px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s}
+  input:checked+.slider{background:#3ddc84}
+  input:checked+.slider:before{transform:translateX(22px)}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="logo">💰 Crypto Monitor Pro</div>
+  <div class="status-pills">
+    <div class="pill"><span class="dot" id="dotMon"></span> Monitoramento <span id="numMoedas">0</span> moedas</div>
+    <div class="pill"><span class="dot off" id="dotTg"></span> Telegram <span id="tgStatus">não configurado</span></div>
+  </div>
+</div>
+
+<div class="barra-disclaimer">
+  ⚠️ <b>Aviso:</b> Todas as análises e scores deste app são <b>sugestões baseadas em indicadores técnicos do passado</b>, não recomendações de compra ou venda. Não preveem o futuro. Decisões de investimento são de sua inteira responsabilidade.
+</div>
+
+<div class="tabs">
+  <div class="tab ativa" data-tab="dashboard">📊 Dashboard</div>
+  <div class="tab" data-tab="grafico">📈 Gráficos & Fibonacci</div>
+  <div class="tab" data-tab="carteira">💼 Minha Carteira</div>
+  <div class="tab" data-tab="alertas">🔔 Histórico de Alertas</div>
+  <div class="tab" data-tab="telegram">📱 Configurar Telegram</div>
+  <div class="tab" data-tab="admin">⚙️ Admin</div>
+</div>
+
+<div class="container">
+
+  <!-- ABA DASHBOARD -->
+  <div id="tab-dashboard">
+    <div class="grid">
+      <div class="panel">
+        <h2>➕ Adicionar Moeda</h2>
+        <input type="text" id="busca" placeholder="Buscar entre 500 moedas...">
+        <div class="lista-moedas" id="listaDisp"><div class="vazio">Carregando moedas...</div></div>
+      </div>
+      <div>
+        <div id="moedasMonitoradas"><div class="panel"><div class="vazio">Nenhuma moeda monitorada ainda.<br>Escolha uma na lista ao lado para começar.</div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ABA GRÁFICO -->
+  <div id="tab-grafico" class="esconde">
+    <div class="panel">
+      <h2>📈 Análise Gráfica & Fibonacci</h2>
+      <select id="selMoedaGrafico"><option value="">Selecione uma moeda monitorada</option></select>
+      <div class="grafico-controles" id="periodos">
+        <div class="periodo-btn" data-dias="1">1 dia</div>
+        <div class="periodo-btn ativo" data-dias="7">7 dias</div>
+        <div class="periodo-btn" data-dias="30">30 dias</div>
+        <div class="periodo-btn" data-dias="90">90 dias</div>
+      </div>
+      <canvas id="grafico" height="100"></canvas>
+      <div id="fibContainer"></div>
+      <div id="backtestContainer" style="margin-top:16px"></div>
+    </div>
+  </div>
+
+  <!-- ABA CARTEIRA -->
+  <div id="tab-carteira" class="esconde">
+    <div class="grid">
+      <div class="panel">
+        <h2>➕ Adicionar Compra</h2>
+        <label>Moeda</label>
+        <select id="cartMoeda"><option value="">Selecione...</option></select>
+        <label>Quantidade comprada</label>
+        <input type="number" id="cartQtd" placeholder="Ex: 0.5" step="any">
+        <label>Como informar o preço?</label>
+        <select id="cartModo" onchange="toggleModoCarteira()">
+          <option value="valor">Sei o preço que paguei (por unidade)</option>
+          <option value="data">Sei a data da compra (busco o preço)</option>
+        </select>
+        <div id="cartValorWrap">
+          <label>Preço pago por unidade (USD)</label>
+          <input type="number" id="cartPreco" placeholder="Ex: 45000" step="any">
+        </div>
+        <div id="cartDataWrap" style="display:none">
+          <label>Data da compra</label>
+          <input type="date" id="cartData">
+          <p style="font-size:11px;color:#6b7280;margin-bottom:8px">Vou buscar o preço de fechamento desse dia no histórico.</p>
+        </div>
+        <button class="btn btn-primary" onclick="addPosicao()" style="margin-top:8px;width:100%">Adicionar à carteira</button>
+        <p id="cartResultado" style="font-size:12px;margin-top:10px"></p>
+        <div style="border-top:1px solid #262b38;margin:18px 0 12px;padding-top:16px">
+          <b style="font-size:13px;color:#7c9eff">🦊 Ou conecte sua MetaMask</b>
+          <p style="font-size:11px;color:#6b7280;margin:6px 0 10px">Lê o saldo atual de ETH na sua carteira (apenas rede Ethereum). É uma <b>estimativa do saldo</b> — não traz o preço médio que você pagou.</p>
+          <button class="btn btn-primary btn-sm" onclick="conectarMetamask()" style="width:100%">Conectar MetaMask</button>
+          <p id="mmResultado" style="font-size:12px;margin-top:8px"></p>
+        </div>
+      </div>
+      <div>
+        <div id="resumoCarteira"></div>
+        <div id="posicoesCarteira"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ABA ALERTAS -->
+  <div id="tab-alertas" class="esconde">
+    <div class="panel">
+      <h2>🔔 Histórico de Alertas Disparados</h2>
+      <div id="histAlertas"><div class="vazio">Nenhum alerta disparado ainda.</div></div>
+    </div>
+  </div>
+
+  <!-- ABA TELEGRAM -->
+  <div id="tab-telegram" class="esconde">
+    <div class="panel">
+      <h2>📱 Conectar Telegram</h2>
+      <div class="telegram-passos">
+        <p><b>Passo 1:</b> No Telegram, procure por <code>@BotFather</code> e envie <code>/newbot</code>. Siga as instruções e copie o <b>token</b> que ele te der.</p>
+        <p style="margin-top:10px"><b>Passo 2:</b> Procure por <code>@userinfobot</code> e envie qualquer mensagem. Ele te dará seu <b>Chat ID</b>.</p>
+        <p style="margin-top:10px"><b>Passo 3:</b> Cole os dois abaixo e clique em conectar. <b>Importante:</b> mande uma mensagem qualquer pro SEU bot primeiro, senão ele não consegue te responder.</p>
+      </div>
+      <div style="margin-top:16px">
+        <label>Token do Bot</label>
+        <input type="text" id="tgToken" placeholder="Ex: 123456789:ABCdef...">
+        <label>Seu Chat ID</label>
+        <input type="text" id="tgChatId" placeholder="Ex: 987654321">
+        <button class="btn btn-primary" onclick="salvarTelegram()" style="margin-top:10px">Conectar e testar</button>
+        <p id="tgResultado" style="margin-top:10px;font-size:13px"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ABA ADMIN -->
+  <div id="tab-admin" class="esconde">
+
+    <!-- SETUP primeiro acesso -->
+    <div id="adminSetup" class="panel esconde" style="max-width:440px;margin:0 auto">
+      <h2>👑 Primeiro acesso — crie o administrador</h2>
+      <p style="font-size:13px;color:#9aa3b2;margin-bottom:12px">Você é o primeiro a acessar. Defina seu login de <b>administrador-mestre</b>. Guarde bem esses dados.</p>
+      <label>Seu e-mail</label>
+      <input type="email" id="setupEmail" placeholder="voce@email.com">
+      <label>Senha (mín. 4 caracteres)</label>
+      <input type="password" id="setupSenha" placeholder="Senha forte">
+      <button class="btn btn-primary" onclick="fazerSetup()" style="width:100%;margin-top:8px">Tornar-me administrador</button>
+      <p id="setupErro" style="color:#ff6b7a;font-size:12px;margin-top:8px"></p>
+    </div>
+
+    <!-- LOGIN -->
+    <div id="adminLogin" class="panel esconde" style="max-width:420px;margin:0 auto">
+      <h2>⚙️ Painel do Administrador</h2>
+      <label>E-mail</label>
+      <input type="email" id="adminEmail" placeholder="voce@email.com">
+      <label>Senha</label>
+      <input type="password" id="adminSenhaInput" placeholder="Senha">
+      <button class="btn btn-primary" onclick="loginAdmin()" style="width:100%;margin-top:8px">Entrar</button>
+      <p id="adminErro" style="color:#ff6b7a;font-size:12px;margin-top:8px"></p>
+    </div>
+
+    <!-- PAINEL -->
+    <div id="adminPainel" class="esconde">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <span style="font-size:13px;color:#9aa3b2">Logado como <b id="admQuemSou" style="color:#7c9eff"></b></span>
+        <button class="btn btn-danger btn-sm" onclick="logoutAdmin()">Sair</button>
+      </div>
+
+      <div class="admin-card">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <b style="font-size:15px;color:#7c9eff">💰 Monetização</b>
+            <p style="font-size:12px;color:#9aa3b2;margin-top:4px">Quando ligada, cada visitante tem <span id="admGratisLabel">1</span> análise grátis e depois vê os planos.</p>
+          </div>
+          <label class="switch"><input type="checkbox" id="admMonetiza" onchange="salvarAdminConfig()"><span class="slider"></span></label>
+        </div>
+        <label style="margin-top:16px">Análises grátis antes de bloquear</label>
+        <input type="number" id="admGratis" value="1" min="0" onchange="salvarAdminConfig()" style="max-width:120px">
+      </div>
+
+      <div class="admin-card">
+        <b style="font-size:15px;color:#7c9eff">📊 Visão geral</b>
+        <div class="indicadores" id="admStats" style="margin-top:12px"></div>
+      </div>
+
+      <div class="admin-card">
+        <b style="font-size:15px;color:#7c9eff">📈 Adesões por dia (últimos 30 dias)</b>
+        <canvas id="grafAdesoes" height="80" style="margin-top:12px"></canvas>
+      </div>
+
+      <div class="admin-card">
+        <b style="font-size:15px;color:#7c9eff">💳 Adesões por plano</b>
+        <div id="admPorPlano" style="margin-top:12px"></div>
+      </div>
+
+      <div class="admin-card">
+        <b style="font-size:15px;color:#7c9eff">➕ Registrar assinante</b>
+        <p style="font-size:12px;color:#9aa3b2;margin:4px 0 10px">Cadastro só com e-mail. A expiração é automática conforme o plano (semanal 7d, quinzenal 15d, mensal 30d).</p>
+        <label>E-mail do assinante</label>
+        <input type="email" id="novoAssinanteEmail" placeholder="cliente@email.com">
+        <label>Plano</label>
+        <select id="novoAssinantePlano"></select>
+        <button class="btn btn-primary btn-sm" onclick="addAssinante()" style="margin-top:8px">Cadastrar adesão</button>
+        <p id="assinanteResultado" style="font-size:12px;margin-top:8px"></p>
+      </div>
+
+      <div class="admin-card">
+        <b style="font-size:15px;color:#7c9eff">👥 Assinantes</b>
+        <div id="admAssinantes" style="margin-top:12px"></div>
+      </div>
+
+      <!-- Gestão de admins (só mestre) -->
+      <div class="admin-card" id="admGestaoAdmins">
+        <b style="font-size:15px;color:#7c9eff">🔑 Administradores</b>
+        <p style="font-size:12px;color:#9aa3b2;margin:4px 0 10px">Só o admin-mestre pode adicionar ou remover outros administradores.</p>
+        <div id="listaAdmins" style="margin-bottom:12px"></div>
+        <div id="addAdminWrap">
+          <label>E-mail do novo admin</label>
+          <input type="email" id="novoAdminEmail" placeholder="parceiro@email.com">
+          <label>Senha provisória</label>
+          <input type="password" id="novoAdminSenha" placeholder="Senha">
+          <button class="btn btn-primary btn-sm" onclick="addAdmin()" style="margin-top:8px">Adicionar admin</button>
+          <p id="adminGestaoResultado" style="font-size:12px;margin-top:8px"></p>
+        </div>
+      </div>
+
+      <div class="disclaimer">💡 <b>Importante:</b> esta é a estrutura de gestão. O cadastro de assinantes está pronto, mas <b>cobrar de verdade</b> exige plugar um gateway de pagamento (Mercado Pago/Stripe) — passo separado. E lembre: dados ficam em memória/arquivo; para uso comercial real, migrar para banco de dados seguro.</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- PAYWALL (aparece quando monetização ligada e limite atingido) -->
+<div id="paywall" class="paywall esconde">
+  <div class="paywall-box">
+    <h2>🔓 Você usou sua análise grátis</h2>
+    <p style="color:#9aa3b2;font-size:14px">Para continuar vendo análises técnicas completas, escolha um plano:</p>
+    <div class="planos" id="paywallPlanos"></div>
+    <p style="font-size:11px;color:#6b7280">O pagamento será processado por gateway externo (em breve). Por enquanto esta é uma demonstração da estrutura.</p>
+    <button class="btn btn-danger btn-sm" onclick="fecharPaywall()" style="margin-top:14px">Fechar</button>
+  </div>
+</div>
+
+<script>
+const API = '';
+let moedasDisp = [];
+let config = { moedas: [] };
+let grafico = null;
+let diasGrafico = 7;
+let sessaoId = localStorage.getItem('cmp_sessao') || ('s'+Date.now()+Math.random().toString(36).slice(2));
+localStorage.setItem('cmp_sessao', sessaoId);
+let adminCreds = JSON.parse(sessionStorage.getItem('cmp_admin') || 'null');
+let monetizacao = { ativa:false, analisesGratis:1, planos:[] };
+
+// ---------- NAVEGAÇÃO ----------
+document.querySelectorAll('.tab').forEach(t => {
+  t.onclick = () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('ativa'));
+    t.classList.add('ativa');
+    document.querySelectorAll('[id^=tab-]').forEach(x => x.classList.add('esconde'));
+    document.getElementById('tab-' + t.dataset.tab).classList.remove('esconde');
+    if (t.dataset.tab === 'alertas') carregarAlertas();
+    if (t.dataset.tab === 'grafico') popularSelectGrafico();
+    if (t.dataset.tab === 'carteira') { popularSelectCarteira(); carregarCarteira(); }
+    if (t.dataset.tab === 'admin') entrarAbaAdmin();
+  };
+});
+
+// ---------- CARREGAR DADOS INICIAIS ----------
+async function init() {
+  await carregarConfig();
+  await carregarMonetizacao();
+  await carregarMoedasDisp();
+  renderMonitoradas();
+  atualizarStatus();
+  setInterval(atualizarStatus, 10000);
+  setInterval(renderMonitoradas, 30000);
+}
+
+async function carregarConfig() {
+  try { config = await (await fetch(API + '/api/config')).json(); }
+  catch(e){ console.error(e); }
+}
+
+async function carregarMoedasDisp() {
+  try {
+    moedasDisp = await (await fetch(API + '/api/moedas-disponiveis')).json();
+    renderDisp();
+  } catch(e){
+    document.getElementById('listaDisp').innerHTML = '<div class="vazio">Erro ao carregar. Recarregue a página.</div>';
+  }
+}
+
+function renderDisp() {
+  const busca = document.getElementById('busca').value.toLowerCase();
+  const filtradas = moedasDisp.filter(m =>
+    !config.moedas.find(c => c.id === m.id) &&
+    (m.nome.toLowerCase().includes(busca) || m.simbolo.toLowerCase().includes(busca))
+  ).slice(0, 100);
+  const el = document.getElementById('listaDisp');
+  if (!filtradas.length) { el.innerHTML = '<div class="vazio">Nenhuma encontrada</div>'; return; }
+  el.innerHTML = filtradas.map(m => `
+    <div class="moeda-disp" onclick="addMoeda('${m.id}')">
+      <img src="${m.imagem}" onerror="this.style.display='none'">
+      <div><b>${m.nome}</b> <span style="color:#6b7280">${m.simbolo}</span></div>
+      <span class="rank">#${m.rank || '-'}</span>
+    </div>`).join('');
+}
+document.getElementById('busca').oninput = renderDisp;
+
+async function addMoeda(id) {
+  const m = moedasDisp.find(x => x.id === id);
+  await fetch(API + '/api/moedas', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(m)
+  });
+  await carregarConfig();
+  renderDisp();
+  renderMonitoradas();
+  document.getElementById('busca').value = '';
+}
+
+async function removerMoeda(id) {
+  if (!confirm('Remover esta moeda do monitoramento?')) return;
+  await fetch(API + '/api/moedas/' + id, { method:'DELETE' });
+  await carregarConfig();
+  renderDisp();
+  renderMonitoradas();
+}
+
+// ---------- RENDER MOEDAS MONITORADAS ----------
+async function renderMonitoradas() {
+  const cont = document.getElementById('moedasMonitoradas');
+  if (!config.moedas.length) {
+    cont.innerHTML = '<div class="panel"><div class="vazio">Nenhuma moeda monitorada ainda.<br>Escolha uma na lista ao lado.</div></div>';
+    return;
+  }
+  let html = '';
+  for (const moeda of config.moedas) {
+    let dados = null;
+    try { dados = await (await fetch(API + '/api/dados/' + moeda.id)).json(); } catch(e){}
+    const p = dados?.preco;
+    const a = dados?.analise;
+
+    const corScore = a ? (a.score >= 68 ? '#3ddc84' : a.score <= 32 ? '#ff6b7a' : '#9aa3b2') : '#6b7280';
+    const varClass = p?.variacao24h >= 0 ? 'pos' : 'neg';
+
+    html += `<div class="card-moeda">
+      <div class="card-head">
+        <div>
+          <div class="nome"><img src="${moeda.imagem}" onerror="this.style.display='none'">${moeda.nome} <span style="color:#6b7280;font-size:13px">${moeda.simbolo}</span></div>
+          ${p ? `<div class="preco">$${p.preco.toLocaleString('en-US',{maximumFractionDigits:6})}</div>
+          <span class="var ${varClass}">${p.variacao24h>=0?'▲':'▼'} ${Math.abs(p.variacao24h||0).toFixed(2)}% (24h)</span>` : '<div style="color:#6b7280;margin-top:8px">⏳ carregando dados...</div>'}
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="removerMoeda('${moeda.id}')">Remover</button>
+      </div>`;
+
+    if (a) {
+      html += `<div class="indicadores">
+        <div class="ind"><div class="lbl">RSI</div><div class="val">${a.indicadores.rsi?.toFixed(1) ?? '-'}</div></div>
+        <div class="ind"><div class="lbl">Tendência</div><div class="val" style="font-size:12px">${a.indicadores.tendencia}</div></div>
+        <div class="ind"><div class="lbl">Volatilidade</div><div class="val">${a.indicadores.volatilidade?.toFixed(1) ?? '-'}%</div></div>
+        <div class="ind"><div class="lbl">Fibonacci</div><div class="val" style="font-size:11px">${a.indicadores.fibonacci?.zona || '-'}</div></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span class="badge ${a.perfil.toLowerCase()}">${a.perfil} — Score ${a.score}/100</span>
+      </div>
+      <div class="score-bar"><div class="score-fill" style="width:${a.score}%;background:${corScore}"></div></div>
+      <div class="sinais">
+        ${a.sinais.map(s => `<div class="sinal"><span class="tag ${s.vies}">${s.vies}</span><div><b>${s.nome}:</b> ${s.leitura}</div></div>`).join('')}
+      </div>
+      <div class="disclaimer">⚠️ <b>${a.recomendacao}</b></div>`;
+    }
+
+    // configuração de alertas
+    html += `<div class="alerta-cfg">
+      <b style="font-size:13px;color:#7c9eff">🔔 Alertas configurados</b>
+      ${(moeda.alertas||[]).map(al => `
+        <div class="alerta-item">
+          <span>${descreverAlerta(al)}</span>
+          <button class="btn btn-danger btn-sm" onclick="removerAlerta('${moeda.id}',${al.id})">×</button>
+        </div>`).join('') || '<div style="color:#6b7280;font-size:12px;margin:8px 0">Nenhum alerta. Adicione abaixo.</div>'}
+      <label>Tipo de alerta</label>
+      <select id="tipoAl_${moeda.id}" onchange="toggleValor('${moeda.id}')">
+        <option value="variacao">Variação % (sobe ou cai X%)</option>
+        <option value="preco_acima">Preço acima de $</option>
+        <option value="preco_abaixo">Preço abaixo de $</option>
+        <option value="score_compra">Quando virar perfil COMPRA</option>
+        <option value="score_venda">Quando virar perfil VENDA</option>
+      </select>
+      <div id="valorWrap_${moeda.id}">
+        <label>Valor</label>
+        <input type="number" id="valorAl_${moeda.id}" placeholder="Ex: 10" step="any">
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="addAlerta('${moeda.id}')">+ Adicionar alerta</button>
+    </div></div>`;
+  }
+  cont.innerHTML = html;
+}
+
+function descreverAlerta(al){
+  if(al.tipo==='variacao') return `Variação de ±${al.valor}%`;
+  if(al.tipo==='preco_acima') return `Preço acima de $${al.valor}`;
+  if(al.tipo==='preco_abaixo') return `Preço abaixo de $${al.valor}`;
+  if(al.tipo==='score_compra') return `Quando virar COMPRA`;
+  if(al.tipo==='score_venda') return `Quando virar VENDA`;
+  return al.tipo;
+}
+
+function toggleValor(id){
+  const tipo = document.getElementById('tipoAl_'+id).value;
+  const wrap = document.getElementById('valorWrap_'+id);
+  wrap.style.display = (tipo==='score_compra'||tipo==='score_venda') ? 'none' : 'block';
+}
+
+async function addAlerta(id){
+  const tipo = document.getElementById('tipoAl_'+id).value;
+  const valorEl = document.getElementById('valorAl_'+id);
+  const body = { tipo };
+  if (tipo!=='score_compra' && tipo!=='score_venda') {
+    if (!valorEl.value) { alert('Digite um valor'); return; }
+    body.valor = parseFloat(valorEl.value);
+  }
+  await fetch(API + '/api/moedas/'+id+'/alertas', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
+  });
+  await carregarConfig();
+  renderMonitoradas();
+}
+
+async function removerAlerta(id, alertaId){
+  await fetch(API + `/api/moedas/${id}/alertas/${alertaId}`, { method:'DELETE' });
+  await carregarConfig();
+  renderMonitoradas();
+}
+
+// ---------- GRÁFICO + FIBONACCI ----------
+function popularSelectGrafico(){
+  const sel = document.getElementById('selMoedaGrafico');
+  sel.innerHTML = '<option value="">Selecione uma moeda</option>' +
+    config.moedas.map(m=>`<option value="${m.id}">${m.nome} (${m.simbolo})</option>`).join('');
+}
+document.getElementById('selMoedaGrafico').onchange = e => { if(e.target.value) carregarGrafico(e.target.value); };
+document.querySelectorAll('#periodos .periodo-btn').forEach(b=>{
+  b.onclick=()=>{
+    document.querySelectorAll('#periodos .periodo-btn').forEach(x=>x.classList.remove('ativo'));
+    b.classList.add('ativo');
+    diasGrafico = parseInt(b.dataset.dias);
+    const id = document.getElementById('selMoedaGrafico').value;
+    if(id) carregarGrafico(id);
+  };
+});
+
+async function carregarGrafico(id){
+  // controle de monetização: verifica se pode analisar
+  if (monetizacao.ativa) {
+    const check = await (await fetch(API + '/api/pode-analisar/' + sessaoId)).json();
+    if (!check.liberado) { abrirPaywall(); return; }
+  }
+  const r = await (await fetch(API + `/api/historico-grafico/${id}?dias=${diasGrafico}`)).json();
+  // registra consumo de análise
+  if (monetizacao.ativa) {
+    await fetch(API + '/api/registrar-analise/' + sessaoId, { method:'POST' });
+  }
+  const labels = r.historico.map(h => new Date(h.t).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',hour:diasGrafico<=1?'2-digit':undefined,minute:diasGrafico<=1?'2-digit':undefined}));
+  const precos = r.historico.map(h => h.preco);
+
+  const datasets = [{ label:'Preço (USD)', data:precos, borderColor:'#7c9eff', backgroundColor:'rgba(124,158,255,0.1)', fill:true, tension:0.2, pointRadius:0, borderWidth:2 }];
+
+  // linhas de Fibonacci
+  const fib = r.analise?.indicadores?.fibonacci;
+  if (fib) {
+    const cores = ['#ff6b7a','#ffa94d','#ffd43b','#3ddc84','#4dabf7','#9775fa','#6b7280'];
+    let i=0;
+    for (const [nome, val] of Object.entries(fib.niveis)) {
+      datasets.push({
+        label: 'Fib '+nome,
+        data: precos.map(()=>val),
+        borderColor: cores[i%cores.length],
+        borderWidth:1, borderDash:[5,5], pointRadius:0, fill:false
+      });
+      i++;
+    }
+  }
+
+  if (grafico) grafico.destroy();
+  grafico = new Chart(document.getElementById('grafico'), {
+    type:'line',
+    data:{ labels, datasets },
+    options:{
+      responsive:true,
+      plugins:{ legend:{ labels:{ color:'#9aa3b2', font:{size:10}, boxWidth:12 } } },
+      scales:{
+        x:{ ticks:{ color:'#6b7280', maxTicksLimit:8 }, grid:{ color:'#20242f' } },
+        y:{ ticks:{ color:'#6b7280' }, grid:{ color:'#20242f' } }
+      }
+    }
+  });
+
+  // tabela Fibonacci + análise
+  let html = '';
+  if (fib) {
+    html += `<div class="panel" style="margin-top:16px">
+      <h2>🔢 Níveis de Fibonacci (${fib.tendenciaAlta?'movimento de alta':'movimento de baixa'})</h2>
+      <p style="font-size:13px;color:#9aa3b2;margin-bottom:8px">Preço atual: <b>$${fib.precoAtual.toLocaleString('en-US',{maximumFractionDigits:6})}</b> — Zona: <b style="color:#7c9eff">${fib.zona||'fora das zonas'}</b></p>
+      <table class="fib-tabela">
+        ${Object.entries(fib.niveis).map(([n,v])=>{
+          const ehZona = fib.zona && fib.zona.includes(n);
+          return `<tr class="${ehZona?'fib-zona':''}"><td class="nivel">${n}</td><td class="preco-fib">$${v.toLocaleString('en-US',{maximumFractionDigits:6})}</td></tr>`;
+        }).join('')}
+      </table>`;
+    if (r.analise) {
+      html += `<div style="margin-top:16px;display:flex;align-items:center;gap:12px">
+        <span class="badge ${r.analise.perfil.toLowerCase()}">${r.analise.perfil} — Score ${r.analise.score}/100</span>
+      </div>
+      <div class="disclaimer">⚠️ <b>${r.analise.recomendacao}</b></div>`;
+    }
+    html += `</div>`;
+  } else {
+    html = '<div class="disclaimer" style="margin-top:16px">Dados insuficientes para calcular Fibonacci neste período. Tente um período maior.</div>';
+  }
+  document.getElementById('fibContainer').innerHTML = html;
+
+  // botão de backtest
+  document.getElementById('backtestContainer').innerHTML = `
+    <div class="panel">
+      <h2>🔬 Backtest — a fórmula funciona? (olhar para trás)</h2>
+      <p style="font-size:13px;color:#9aa3b2;margin-bottom:12px">Pega os indicadores, recua no tempo (até 6 meses), gera o sinal com os dados que existiam naquela época e confere se o preço confirmou depois. Mostra a taxa de acerto real — sem maquiagem.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-primary btn-sm" onclick="rodarBacktest('${id}')">Rodar backtest desta moeda (180d)</button>
+        <button class="btn btn-primary btn-sm" onclick="rodarBacktestAgregado()" style="background:#3ddc84">Taxa média real (várias moedas)</button>
+        <span style="font-size:12px;color:#6b7280">Horizonte: 7 dias à frente</span>
+      </div>
+      <div id="backtestResultado" style="margin-top:14px"></div>
+      <div id="backtestAgregadoResultado" style="margin-top:14px"></div>
+    </div>`;
+}
+
+async function rodarBacktestAgregado(){
+  const el = document.getElementById('backtestAgregadoResultado');
+  el.innerHTML = '<p style="color:#9aa3b2">⏳ Rodando backtest em várias moedas... isso leva ~30 segundos (testa 8-10 moedas no histórico real).</p>';
+  try {
+    const r = await (await fetch(API + '/api/backtest-agregado?horizonte=7')).json();
+    if (!r.totalSinais){ el.innerHTML = '<div class="disclaimer">Não foi possível rodar o agregado agora (limite da API de dados). Tente em 1 minuto.</div>'; return; }
+    const cor = r.taxaMedia >= 60 ? '#3ddc84' : r.taxaMedia >= 50 ? '#d4c373' : '#ff6b7a';
+    el.innerHTML = `
+      <div class="panel" style="background:#101a14;border-color:#1e3a2a">
+        <h2 style="color:#3ddc84">🎯 Taxa média real da estratégia</h2>
+        <div class="indicadores">
+          <div class="ind"><div class="lbl">Acerto MÉDIO</div><div class="val" style="color:${cor};font-size:22px">${r.taxaMedia.toFixed(1)}%</div></div>
+          <div class="ind"><div class="lbl">Total de sinais</div><div class="val">${r.totalSinais}</div></div>
+          <div class="ind"><div class="lbl">Moedas testadas</div><div class="val">${r.moedasTestadas}</div></div>
+        </div>
+        <p style="font-size:13px;color:#9aa3b2;margin:10px 0">Esta é a métrica honesta: a média de acerto da fórmula no histórico real de várias moedas. Moedas individuais variam para cima e para baixo desta média.</p>
+        <div style="margin-top:10px">
+          ${r.porMoeda.map(m=>`<div class="bench-linha"><span>${m.id}</span><span style="color:${m.taxa>=60?'#3ddc84':m.taxa>=50?'#d4c373':'#ff6b7a'}">${m.taxa.toFixed(1)}% (${m.sinais} sinais)</span></div>`).join('')}
+        </div>
+        <div class="disclaimer" style="margin-top:12px">📌 Mesmo com ~65-70% de acerto médio, isso <b>não é garantia de lucro</b>: um acerto pequeno e um erro grande podem dar prejuízo. Gestão de risco e tamanho de posição importam tanto quanto acertar a direção.</div>
+      </div>`;
+  } catch(e){
+    el.innerHTML = '<div class="disclaimer">Erro ao rodar backtest agregado. Tente novamente.</div>';
+  }
+}
+
+
+async function rodarBacktest(id){
+  const el = document.getElementById('backtestResultado');
+  el.innerHTML = '<p style="color:#9aa3b2">⏳ Rodando backtest... isso pode levar alguns segundos.</p>';
+  try {
+    const r = await (await fetch(API + `/api/backtest/${id}?dias=180&horizonte=7`)).json();
+    if (r.erro){ el.innerHTML = `<div class="disclaimer">${r.erro}</div>`; return; }
+
+    const corTaxa = r.taxaAcerto >= 55 ? '#3ddc84' : r.taxaAcerto >= 45 ? '#d4c373' : '#ff6b7a';
+    el.innerHTML = `
+      <div class="indicadores">
+        <div class="ind"><div class="lbl">Taxa de acerto</div><div class="val" style="color:${corTaxa};font-size:20px">${r.taxaAcerto.toFixed(1)}%</div></div>
+        <div class="ind"><div class="lbl">Sinais testados</div><div class="val">${r.totalSinais}</div></div>
+        <div class="ind"><div class="lbl">Acertos / erros</div><div class="val">${r.acertos} / ${r.erros}</div></div>
+        <div class="ind"><div class="lbl">vs. cara-ou-coroa</div><div class="val" style="color:${corTaxa}">${(r.taxaAcerto-50).toFixed(1)}pp</div></div>
+      </div>
+      <div class="indicadores">
+        <div class="ind"><div class="lbl">Acerto em COMPRA</div><div class="val">${r.taxaCompra!=null?r.taxaCompra.toFixed(1)+'%':'-'}<div style="font-size:10px;color:#6b7280">${r.totalCompra} sinais</div></div></div>
+        <div class="ind"><div class="lbl">Acerto em VENDA</div><div class="val">${r.taxaVenda!=null?r.taxaVenda.toFixed(1)+'%':'-'}<div style="font-size:10px;color:#6b7280">${r.totalVenda} sinais</div></div></div>
+        <div class="ind"><div class="lbl">Retorno seguindo sinais</div><div class="val" style="color:${r.retornoMedioPorSinal>=0?'#3ddc84':'#ff6b7a'}">${r.retornoMedioPorSinal>=0?'+':''}${r.retornoMedioPorSinal.toFixed(2)}%</div></div>
+        <div class="ind"><div class="lbl">Comprar e segurar</div><div class="val" style="color:${r.retornoBuyHold>=0?'#3ddc84':'#ff6b7a'}">${r.retornoBuyHold>=0?'+':''}${r.retornoBuyHold.toFixed(2)}%</div></div>
+      </div>
+      <div class="disclaimer" style="margin-top:14px">📌 <b>Veredito:</b> ${r.veredito}</div>`;
+  } catch(e){
+    el.innerHTML = '<div class="disclaimer">Erro ao rodar backtest. Tente novamente.</div>';
+  }
+}
+
+// ---------- ALERTAS ----------
+async function carregarAlertas(){
+  const alertas = await (await fetch(API + '/api/alertas')).json();
+  const el = document.getElementById('histAlertas');
+  if(!alertas.length){ el.innerHTML='<div class="vazio">Nenhum alerta disparado ainda.</div>'; return; }
+  el.innerHTML = alertas.map(a=>`
+    <div class="alerta-hist">
+      <b>${a.moeda}</b> — ${a.mensagem}
+      ${a.dados?.score!=null?`<span class="badge ${a.dados.perfil?.toLowerCase()}" style="margin-left:8px">${a.dados.perfil} ${a.dados.score}</span>`:''}
+      <div class="hora">${new Date(a.timestamp).toLocaleString('pt-BR')}</div>
+    </div>`).join('');
+}
+
+// ---------- CARTEIRA ----------
+function popularSelectCarteira(){
+  const sel = document.getElementById('cartMoeda');
+  // permite escolher entre todas as moedas disponíveis, não só as monitoradas
+  const fonte = moedasDisp.length ? moedasDisp.slice(0, 250) : config.moedas;
+  sel.innerHTML = '<option value="">Selecione...</option>' +
+    fonte.map(m=>`<option value="${m.id}" data-nome="${m.nome}" data-simbolo="${m.simbolo}" data-img="${m.imagem||''}">${m.nome} (${m.simbolo})</option>`).join('');
+}
+
+function toggleModoCarteira(){
+  const modo = document.getElementById('cartModo').value;
+  document.getElementById('cartValorWrap').style.display = modo==='valor'?'block':'none';
+  document.getElementById('cartDataWrap').style.display = modo==='data'?'block':'none';
+}
+
+async function addPosicao(){
+  const sel = document.getElementById('cartMoeda');
+  const opt = sel.options[sel.selectedIndex];
+  const moedaId = sel.value;
+  const qtd = document.getElementById('cartQtd').value;
+  const modo = document.getElementById('cartModo').value;
+  const res = document.getElementById('cartResultado');
+
+  if(!moedaId || !qtd){ res.textContent='Selecione a moeda e a quantidade.'; res.style.color='#ff6b7a'; return; }
+
+  const body = {
+    moedaId,
+    nome: opt.dataset.nome,
+    simbolo: opt.dataset.simbolo,
+    imagem: opt.dataset.img,
+    quantidade: qtd,
+    modo,
+  };
+  if(modo==='valor'){
+    const preco = document.getElementById('cartPreco').value;
+    if(!preco){ res.textContent='Informe o preço pago.'; res.style.color='#ff6b7a'; return; }
+    body.precoCompra = preco;
+  } else {
+    const data = document.getElementById('cartData').value;
+    if(!data){ res.textContent='Informe a data da compra.'; res.style.color='#ff6b7a'; return; }
+    body.dataCompra = new Date(data).toISOString();
+  }
+
+  res.textContent = 'Processando...'; res.style.color='#9aa3b2';
+  const r = await (await fetch(API+'/api/carteira',{
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
+  })).json();
+
+  if(r.erro){ res.textContent = r.erro; res.style.color='#ff6b7a'; return; }
+  res.textContent = '✅ Adicionado!'; res.style.color='#3ddc84';
+  document.getElementById('cartQtd').value='';
+  if(document.getElementById('cartPreco')) document.getElementById('cartPreco').value='';
+  carregarCarteira();
+}
+
+async function removerPosicao(id){
+  if(!confirm('Remover esta posição da carteira?')) return;
+  await fetch(API+'/api/carteira/'+id, { method:'DELETE' });
+  carregarCarteira();
+}
+
+async function carregarCarteira(){
+  const r = await (await fetch(API+'/api/carteira')).json();
+  const resumoEl = document.getElementById('resumoCarteira');
+  const posEl = document.getElementById('posicoesCarteira');
+
+  if(!r.posicoes.length){
+    resumoEl.innerHTML = '';
+    posEl.innerHTML = '<div class="panel"><div class="vazio">Carteira vazia.<br>Adicione sua primeira compra ao lado.</div></div>';
+    return;
+  }
+
+  const res = r.resumo;
+  const lucroClass = res.lucroTotal>=0?'pos':'neg';
+  const seta = res.lucroTotal>=0?'▲':'▼';
+
+  // Card de resumo + benchmark
+  const b = res.benchmark;
+  function linhaBench(nome, valor, ehVoce){
+    if(valor==null) return `<div class="bench-linha"><span>${nome}</span><span style="color:#6b7280">indisponível</span></div>`;
+    const cor = valor>=0?'#3ddc84':'#ff6b7a';
+    const destaque = ehVoce?'font-weight:700;color:#7c9eff':'';
+    return `<div class="bench-linha" style="${destaque}"><span>${nome}</span><span style="color:${cor}">${valor>=0?'+':''}${valor.toFixed(2)}%</span></div>`;
+  }
+  // veredito vs benchmark
+  let veredito = '';
+  if(b.bitcoin!=null){
+    const dif = b.suaCarteira - b.bitcoin;
+    veredito = dif>=0
+      ? `Sua carteira está <b style="color:#3ddc84">ganhando do Bitcoin</b> por ${dif.toFixed(2)} pontos percentuais no período. 👏`
+      : `Sua carteira está <b style="color:#ff6b7a">perdendo para o Bitcoin</b> por ${Math.abs(dif).toFixed(2)} pontos percentuais. Comprar e segurar BTC teria rendido mais até aqui.`;
+  }
+
+  resumoEl.innerHTML = `
+    <div class="panel" style="margin-bottom:16px">
+      <h2>💼 Resumo da Carteira</h2>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
+        <div class="ind"><div class="lbl">Investido</div><div class="val">$${res.totalInvestido.toLocaleString('en-US',{maximumFractionDigits:2})}</div></div>
+        <div class="ind"><div class="lbl">Valor atual</div><div class="val">$${res.totalAtual.toLocaleString('en-US',{maximumFractionDigits:2})}</div></div>
+        <div class="ind"><div class="lbl">Resultado</div><div class="val" style="color:${res.lucroTotal>=0?'#3ddc84':'#ff6b7a'}">${seta} ${res.lucroTotalPct>=0?'+':''}${res.lucroTotalPct.toFixed(2)}%</div></div>
+        <div class="ind"><div class="lbl">Lucro/Prejuízo</div><div class="val" style="color:${res.lucroTotal>=0?'#3ddc84':'#ff6b7a'}">$${res.lucroTotal.toLocaleString('en-US',{maximumFractionDigits:2})}</div></div>
+      </div>
+      <div style="margin-top:18px">
+        <b style="font-size:13px;color:#7c9eff">📊 Sua carteira vs. o mercado</b>
+        <p style="font-size:11px;color:#6b7280;margin:4px 0 10px">Comparado desde ${new Date(res.dataReferencia).toLocaleDateString('pt-BR')} (sua compra mais antiga)</p>
+        <div class="bench-box">
+          ${linhaBench('🟣 Sua carteira', b.suaCarteira, true)}
+          ${linhaBench('🟠 Bitcoin', b.bitcoin)}
+          ${linhaBench('🔵 Ethereum', b.ethereum)}
+        </div>
+        ${veredito?`<div class="disclaimer" style="background:#101a2a;border-color:#2c4a7c;color:#9ec5ff">${veredito}</div>`:''}
+      </div>
+    </div>`;
+
+  posEl.innerHTML = '<div class="panel"><h2>📋 Suas posições</h2>' +
+    r.posicoes.map(p=>{
+      const lc = p.lucro>=0?'pos':'neg';
+      const st = p.lucro>=0?'▲':'▼';
+      const cor = p.lucro>=0?'#3ddc84':'#ff6b7a';
+      return `<div class="card-moeda">
+        <div class="card-head">
+          <div>
+            <div class="nome"><img src="${p.imagem}" onerror="this.style.display='none'">${p.nome} <span style="color:#6b7280;font-size:13px">${p.simbolo}</span></div>
+            <div style="font-size:12px;color:#9aa3b2;margin-top:4px">${p.quantidade} unidades · comprado a $${p.precoCompra.toLocaleString('en-US',{maximumFractionDigits:6})} · ${new Date(p.dataCompra).toLocaleDateString('pt-BR')}</div>
+          </div>
+          <button class="btn btn-danger btn-sm" onclick="removerPosicao(${p.id})">Remover</button>
+        </div>
+        <div class="indicadores">
+          <div class="ind"><div class="lbl">Investido</div><div class="val">$${p.valorInvestido.toLocaleString('en-US',{maximumFractionDigits:2})}</div></div>
+          <div class="ind"><div class="lbl">Preço atual</div><div class="val">$${p.precoAtual.toLocaleString('en-US',{maximumFractionDigits:6})}</div></div>
+          <div class="ind"><div class="lbl">Valor atual</div><div class="val">$${p.valorAtual.toLocaleString('en-US',{maximumFractionDigits:2})}</div></div>
+          <div class="ind"><div class="lbl">Resultado</div><div class="val" style="color:${cor}">${st} ${p.lucroPct>=0?'+':''}${p.lucroPct.toFixed(2)}%</div></div>
+        </div>
+      </div>`;
+    }).join('') + '</div>';
+}
+
+// ---------- TELEGRAM ----------
+async function salvarTelegram(){
+  const token = document.getElementById('tgToken').value.trim();
+  const chatId = document.getElementById('tgChatId').value.trim();
+  if(!token||!chatId){ alert('Preencha token e chat ID'); return; }
+  const res = document.getElementById('tgResultado');
+  res.textContent = 'Testando...';
+  const r = await (await fetch(API+'/api/telegram',{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({token, chatId})
+  })).json();
+  res.textContent = r.mensagem;
+  res.style.color = r.ok ? '#3ddc84' : '#ff6b7a';
+  atualizarStatus();
+}
+
+// ---------- MONETIZAÇÃO / PAYWALL ----------
+async function carregarMonetizacao(){
+  try {
+    monetizacao = await (await fetch(API+'/api/monetizacao')).json();
+    // FORÇA PAYWALL SEMPRE DESLIGADO — nunca mostra monetização
+    monetizacao.ativa = false;
+  } catch(e){}
+}
+
+async function abrirPaywall(){
+  // recarrega os planos para garantir que não estão vazios
+  await carregarMonetizacao();
+  const el = document.getElementById('paywallPlanos');
+  if (!monetizacao.planos || !monetizacao.planos.length) {
+    el.innerHTML = '<p style="color:#9aa3b2">Nenhum plano configurado no momento.</p>';
+  } else {
+    el.innerHTML = monetizacao.planos.map((p)=>`
+      <div class="plano ${p.id==='mensal'?'destaque':''}" onclick="escolherPlano('${p.id}')">
+        <div class="pnome">${p.nome}</div>
+        <div class="ppreco">R$${p.preco.toFixed(2).replace('.',',')}</div>
+        <div class="pdia">R$${(p.preco/p.dias).toFixed(2).replace('.',',')}/dia</div>
+        ${p.id==='mensal'?'<div class="ptag">MELHOR VALOR</div>':''}
+      </div>`).join('');
+  }
+  document.getElementById('paywall').classList.remove('esconde');
+}
+
+function escolherPlano(planoId){
+  const p = monetizacao.planos.find(x=>x.id===planoId);
+  if(!p) return;
+  // Pagamento real ainda não está plugado — informa com clareza em vez de travar
+  const box = document.querySelector('#paywall .paywall-box');
+  box.innerHTML = `
+    <h2>📋 Plano ${p.nome} selecionado</h2>
+    <p style="color:#9aa3b2;font-size:14px;margin:12px 0">Valor: <b style="color:#e6e8ec">R$${p.preco.toFixed(2).replace('.',',')}</b> por ${p.dias} dias.</p>
+    <div class="disclaimer" style="text-align:left">💳 <b>Pagamento ainda não está ativo.</b> A cobrança real (Mercado Pago / Pix / cartão) é um passo que será plugado depois. Por enquanto, para liberar um assinante, o administrador cadastra o e-mail dele na aba Admin → Registrar assinante.</div>
+    <button class="btn btn-primary" onclick="fecharPaywall()" style="margin-top:14px">Entendi</button>`;
+}
+
+function fecharPaywall(){
+  document.getElementById('paywall').classList.add('esconde');
+  // restaura o conteúdo original da caixa (caso tenha sido trocado por escolherPlano)
+  const box = document.querySelector('#paywall .paywall-box');
+  box.innerHTML = `
+    <h2>🔓 Você usou sua análise grátis</h2>
+    <p style="color:#9aa3b2;font-size:14px">Para continuar vendo análises técnicas completas, escolha um plano:</p>
+    <div class="planos" id="paywallPlanos"></div>
+    <p style="font-size:11px;color:#6b7280">O pagamento será processado por gateway externo (em breve). Por enquanto esta é uma demonstração da estrutura.</p>
+    <button class="btn btn-danger btn-sm" onclick="fecharPaywall()" style="margin-top:14px">Fechar</button>`;
+}
+
+// ---------- METAMASK ----------
+async function conectarMetamask(){
+  const res = document.getElementById('mmResultado');
+  if (typeof window.ethereum === 'undefined') {
+    res.innerHTML = 'MetaMask não detectada. Instale a extensão em metamask.io e tente de novo.';
+    res.style.color = '#ff6b7a';
+    return;
+  }
+  try {
+    res.textContent = 'Conectando...'; res.style.color = '#9aa3b2';
+    const contas = await window.ethereum.request({ method: 'eth_requestAccounts' });
+    const conta = contas[0];
+    // saldo em wei (hex) -> ETH
+    const saldoHex = await window.ethereum.request({ method: 'eth_getBalance', params: [conta, 'latest'] });
+    const saldoEth = parseInt(saldoHex, 16) / 1e18;
+
+    // adiciona como posição estimada (sem preço médio — usa preço atual como referência informativa)
+    const dados = await (await fetch(API + '/api/dados/ethereum')).json();
+    const precoAtual = dados?.preco?.preco;
+
+    res.innerHTML = `🦊 Conectado!<br>Carteira: <code style="font-size:10px">${conta.slice(0,8)}...${conta.slice(-6)}</code><br>Saldo: <b>${saldoEth.toFixed(5)} ETH</b>${precoAtual?` (≈ $${(saldoEth*precoAtual).toLocaleString('en-US',{maximumFractionDigits:2})})`:''}<br><span style="color:#d4c373;font-size:11px">⚠️ Estimativa do saldo on-chain atual. Não inclui o preço médio que você pagou — para calcular lucro/prejuízo, adicione a compra manualmente acima.</span>`;
+    res.style.color = '#3ddc84';
+  } catch(e){
+    res.textContent = 'Conexão cancelada ou erro: ' + (e.message||'');
+    res.style.color = '#ff6b7a';
+  }
+}
+
+// ---------- ADMIN ----------
+let admGraf = null;
+
+function entrarAbaAdmin(){
+  fetch(API+'/api/admin/estado').then(r=>r.json()).then(e=>{
+    document.getElementById('adminSetup').classList.add('esconde');
+    document.getElementById('adminLogin').classList.add('esconde');
+    document.getElementById('adminPainel').classList.add('esconde');
+    if (adminCreds) { document.getElementById('adminPainel').classList.remove('esconde'); carregarDashboard(); }
+    else if (!e.configurado) document.getElementById('adminSetup').classList.remove('esconde');
+    else document.getElementById('adminLogin').classList.remove('esconde');
+  });
+}
+
+async function fazerSetup(){
+  const email = document.getElementById('setupEmail').value.trim();
+  const senha = document.getElementById('setupSenha').value;
+  const r = await (await fetch(API+'/api/admin/setup',{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,senha})
+  })).json();
+  if(r.ok){ adminCreds={email,senha,mestre:true}; salvarCreds(); entrarAbaAdmin(); }
+  else document.getElementById('setupErro').textContent = r.erro;
+}
+
+async function loginAdmin(){
+  const email = document.getElementById('adminEmail').value.trim();
+  const senha = document.getElementById('adminSenhaInput').value;
+  const r = await (await fetch(API+'/api/admin/login',{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,senha})
+  })).json();
+  if(r.ok){ adminCreds={email,senha,mestre:r.mestre}; salvarCreds(); entrarAbaAdmin(); }
+  else document.getElementById('adminErro').textContent = r.erro || 'Erro ao entrar';
+}
+
+function logoutAdmin(){ adminCreds=null; sessionStorage.removeItem('cmp_admin'); entrarAbaAdmin(); }
+function salvarCreds(){ sessionStorage.setItem('cmp_admin', JSON.stringify(adminCreds)); }
+
+async function carregarDashboard(){
+  document.getElementById('admQuemSou').textContent = adminCreds.email + (adminCreds.mestre?' (mestre)':'');
+  const r = await (await fetch(API+'/api/admin/dashboard',{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(adminCreds)
+  })).json();
+  if(r.erro){ logoutAdmin(); return; }
+
+  document.getElementById('admMonetiza').checked = r.config.monetizacaoAtiva;
+  document.getElementById('admGratis').value = r.config.analisesGratis;
+  document.getElementById('admGratisLabel').textContent = r.config.analisesGratis;
+
+  document.getElementById('admStats').innerHTML = `
+    <div class="ind"><div class="lbl">Assinantes ativos</div><div class="val" style="color:#3ddc84">${r.stats.ativos}</div></div>
+    <div class="ind"><div class="lbl">Inativos/expirados</div><div class="val" style="color:#ff6b7a">${r.stats.inativos}</div></div>
+    <div class="ind"><div class="lbl">Total cadastrados</div><div class="val">${r.stats.totalAssinantes}</div></div>
+    <div class="ind"><div class="lbl">Receita acumulada</div><div class="val">R$${r.stats.receitaAcumulada.toFixed(2).replace('.',',')}</div></div>
+    <div class="ind"><div class="lbl">Visitantes ativos</div><div class="val">${r.stats.sessoesAtivas}</div></div>
+    <div class="ind"><div class="lbl">Monetização</div><div class="val" style="font-size:13px;color:${r.config.monetizacaoAtiva?'#3ddc84':'#6b7280'}">${r.config.monetizacaoAtiva?'ATIVA':'desligada'}</div></div>`;
+
+  const labels = Object.keys(r.adesoesPorDia).map(d=>d.slice(8)+'/'+d.slice(5,7));
+  const valores = Object.values(r.adesoesPorDia);
+  if(admGraf) admGraf.destroy();
+  admGraf = new Chart(document.getElementById('grafAdesoes'),{
+    type:'bar',
+    data:{labels,datasets:[{label:'Adesões',data:valores,backgroundColor:'#7c9eff'}]},
+    options:{plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#6b7280',maxTicksLimit:10},grid:{display:false}},y:{ticks:{color:'#6b7280',precision:0},grid:{color:'#20242f'}}}}
+  });
+
+  document.getElementById('admPorPlano').innerHTML = Object.values(r.adesoesPorPlano).map(p=>`
+    <div class="bench-linha"><span>${p.nome}</span><span>${p.ativos} ativos / ${p.total} total · <b style="color:#3ddc84">R$${p.receita.toFixed(2).replace('.',',')}</b></span></div>`).join('') || '<p style="color:#6b7280;font-size:13px">Nenhuma adesão ainda.</p>';
+
+  document.getElementById('novoAssinantePlano').innerHTML = r.config.planos.map(p=>`<option value="${p.id}">${p.nome} — R$${p.preco.toFixed(2).replace('.',',')} (${p.dias} dias)</option>`).join('');
+
+  document.getElementById('admAssinantes').innerHTML = r.assinantes.length ? r.assinantes.map(a=>`
+    <div class="alerta-item" style="border-left-color:${a.ativo?'#3ddc84':'#ff6b7a'}">
+      <span><b>${a.email}</b> · ${a.planoNome} · ${a.ativo?`<span style="color:#3ddc84">ativo (${a.diasRestantes}d restantes)</span>`:'<span style="color:#ff6b7a">expirado</span>'} · adesão ${new Date(a.aderiuEm).toLocaleDateString('pt-BR')}</span>
+      <button class="btn btn-danger btn-sm" onclick="removerAssinante(${a.id})">×</button>
+    </div>`).join('') : '<p style="color:#6b7280;font-size:13px">Nenhum assinante cadastrado.</p>';
+
+  carregarAdmins();
+}
+
+async function carregarAdmins(){
+  const addWrap = document.getElementById('addAdminWrap');
+  const lista = await (await fetch(API+'/api/admin/admins/listar',{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(adminCreds)
+  })).json();
+  document.getElementById('listaAdmins').innerHTML = lista.map(a=>`
+    <div class="alerta-item">
+      <span>${a.email} ${a.mestre?'<span class="ptag">MESTRE</span>':''}</span>
+      ${(adminCreds.mestre && !a.mestre)?`<button class="btn btn-danger btn-sm" onclick="removerAdmin('${a.email}')">remover</button>`:''}
+    </div>`).join('');
+  addWrap.style.display = adminCreds.mestre ? 'block' : 'none';
+}
+
+async function salvarAdminConfig(){
+  await fetch(API+'/api/admin/config',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({...adminCreds, monetizacaoAtiva:document.getElementById('admMonetiza').checked, analisesGratis:parseInt(document.getElementById('admGratis').value)||0})
+  });
+  await carregarMonetizacao();
+  carregarDashboard();
+}
+
+async function addAssinante(){
+  const assinanteEmail = document.getElementById('novoAssinanteEmail').value.trim();
+  const planoId = document.getElementById('novoAssinantePlano').value;
+  const res = document.getElementById('assinanteResultado');
+  const r = await (await fetch(API+'/api/admin/assinantes/add',{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...adminCreds, assinanteEmail, planoId})
+  })).json();
+  if(r.ok){ res.textContent='✅ Adesão registrada!'; res.style.color='#3ddc84'; document.getElementById('novoAssinanteEmail').value=''; carregarDashboard(); }
+  else { res.textContent=r.erro; res.style.color='#ff6b7a'; }
+}
+
+async function removerAssinante(id){
+  if(!confirm('Remover este assinante?')) return;
+  await fetch(API+'/api/admin/assinantes/remover',{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...adminCreds, alvoId:id})
+  });
+  carregarDashboard();
+}
+
+async function addAdmin(){
+  const novoEmail = document.getElementById('novoAdminEmail').value.trim();
+  const novaSenha = document.getElementById('novoAdminSenha').value;
+  const res = document.getElementById('adminGestaoResultado');
+  const r = await (await fetch(API+'/api/admin/admins/add',{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...adminCreds, novoEmail, novaSenha})
+  })).json();
+  if(r.ok){ res.textContent='✅ Admin adicionado!'; res.style.color='#3ddc84'; document.getElementById('novoAdminEmail').value=''; document.getElementById('novoAdminSenha').value=''; carregarAdmins(); }
+  else { res.textContent=r.erro; res.style.color='#ff6b7a'; }
+}
+
+async function removerAdmin(alvo){
+  if(!confirm('Remover '+alvo+' como admin?')) return;
+  await fetch(API+'/api/admin/admins/remover',{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...adminCreds, alvo})
+  });
+  carregarAdmins();
+}
+
+
+async function atualizarStatus(){
+  try{
+    const s = await (await fetch(API+'/api/status')).json();
+    document.getElementById('numMoedas').textContent = s.moedas;
+    document.getElementById('dotTg').className = 'dot' + (s.telegram?'':' off');
+    document.getElementById('tgStatus').textContent = s.telegram?'conectado':'não configurado';
+  }catch(e){}
+}
+
+init();
+</script>
+</body>
+</html>
