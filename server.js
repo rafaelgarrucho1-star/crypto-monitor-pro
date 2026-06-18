@@ -10,6 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const analise = require('./analise');
 const aprendizado = require('./aprendizado');
+const fontes = require('./fontes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -223,7 +224,23 @@ async function buscarListaMoedas() {
     });
     listaMoedas = todas;
     listaMoedasTimestamp = agora;
-    console.log(`✅ Lista de ${todas.length} moedas carregada (Binance, por volume)`);
+
+    // Acrescenta moedas que a Binance não lista (ex: AERO), vindas do CoinGecko.
+    for (const [cgId, info] of Object.entries(fontes.MOEDAS_FORA_BINANCE)) {
+      const id = cgId; // usa o próprio cgId como id interno
+      if (!listaMoedas.find((m) => m.id === id)) {
+        listaMoedas.push({
+          id,
+          nome: info.nome,
+          simbolo: info.simbolo,
+          imagem: '',
+          rank: 999,
+          foraBinance: true, // marca para o buscarPrecos saber usar fallback
+        });
+        mapaSimboloParaId[info.simbolo] = id;
+      }
+    }
+    console.log(`✅ Lista de ${listaMoedas.length} moedas (Binance + ${Object.keys(fontes.MOEDAS_FORA_BINANCE).length} via CoinGecko)`);
   } catch (e) {
     console.error('Erro ao buscar lista de moedas:', e.message);
   }
@@ -250,29 +267,44 @@ function symbolDeId(id) {
 async function buscarPrecos(ids) {
   if (!ids.length) return {};
   await garantirMapa();
-  try {
-    // uma chamada só traz todos os tickers; filtramos os que queremos
-    const r = await apiGet(`${BINANCE}/ticker/24hr`);
-    const porSymbol = {};
-    r.data.forEach((t) => { porSymbol[t.symbol] = t; });
 
-    const resultado = {};
-    for (const id of ids) {
-      const symbol = symbolDeId(id);
-      const t = porSymbol[symbol];
-      if (!t) continue;
-      resultado[id] = {
-        usd: parseFloat(t.lastPrice),
-        usd_24h_change: parseFloat(t.priceChangePercent),
-        usd_market_cap: parseFloat(t.quoteVolume), // Binance não dá mcap; usamos volume como proxy
-        usd_24h_vol: parseFloat(t.quoteVolume),
-      };
-    }
-    return resultado;
-  } catch (e) {
-    console.error('Erro ao buscar preços:', e.message);
-    return {};
+  // separa moedas fora da Binance (ex: AERO) — preço vem do CoinGecko
+  const idsFora = ids.filter((id) => fontes.MOEDAS_FORA_BINANCE[id]);
+  const idsBinance = ids.filter((id) => !fontes.MOEDAS_FORA_BINANCE[id]);
+
+  const resultado = {};
+
+  // 1) moedas fora da Binance: fallback CoinGecko (cacheado 1h)
+  for (const id of idsFora) {
+    try {
+      const fb = await fontes.precoFallback(id);
+      if (fb) resultado[id] = fb;
+    } catch (e) { /* segue */ }
   }
+
+  // 2) moedas da Binance: ticker normal
+  if (idsBinance.length) {
+    try {
+      const r = await apiGet(`${BINANCE}/ticker/24hr`);
+      const porSymbol = {};
+      r.data.forEach((t) => { porSymbol[t.symbol] = t; });
+      for (const id of idsBinance) {
+        const symbol = symbolDeId(id);
+        const t = porSymbol[symbol];
+        if (!t) continue;
+        resultado[id] = {
+          usd: parseFloat(t.lastPrice),
+          usd_24h_change: parseFloat(t.priceChangePercent),
+          usd_market_cap: parseFloat(t.quoteVolume),
+          usd_24h_vol: parseFloat(t.quoteVolume),
+        };
+      }
+    } catch (e) {
+      console.error('Erro ao buscar preços (Binance):', e.message);
+    }
+  }
+
+  return resultado;
 }
 
 // ------------------------------------------------------------
@@ -285,9 +317,27 @@ async function buscarHistorico(id, dias = 7) {
   if (cache && Date.now() - cache.ts < 600000) return cache.dados;
 
   await garantirMapa();
+
+  // Moedas fora da Binance (ex: AERO): histórico vem do CoinGecko
+  if (fontes.MOEDAS_FORA_BINANCE[id]) {
+    try {
+      const cgId = fontes.MOEDAS_FORA_BINANCE[id].cgId;
+      const r = await axios.get(`https://api.coingecko.com/api/v3/coins/${cgId}/market_chart`, {
+        params: { vs_currency: 'usd', days: dias }, timeout: 20000,
+      });
+      const dados = r.data.prices.map((p) => ({ t: p[0], preco: p[1] }));
+      cacheHistorico[chave] = { ts: Date.now(), dados };
+      return dados;
+    } catch (e) {
+      console.error(`Erro histórico CoinGecko ${id}:`, e.response?.status || e.message);
+      if (cache) return cache.dados;
+      return [];
+    }
+  }
+
+  // Demais moedas: candles da Binance
   try {
     const symbol = symbolDeId(id);
-    // intervalo: usa candles diários; para 1 dia usa de hora em hora p/ ter pontos
     let interval = '1d';
     let limit = dias + 5;
     if (dias <= 1) { interval = '1h'; limit = 24; }
@@ -295,7 +345,6 @@ async function buscarHistorico(id, dias = 7) {
     if (limit > 1000) limit = 1000;
 
     const r = await apiGet(`${BINANCE}/klines`, { symbol, interval, limit });
-    // cada kline: [openTime, open, high, low, close, volume, closeTime, ...]
     const dados = r.data.map((k) => ({ t: k[0], preco: parseFloat(k[4]) }));
     cacheHistorico[chave] = { ts: Date.now(), dados };
     return dados;
@@ -375,16 +424,41 @@ async function cicloMonitoramento() {
   const ids = config.moedas.map((m) => m.id);
   const precos = await buscarPrecos(ids);
 
+  // ENRIQUECIMENTO (fontes secundárias, cacheadas 1h, não bloqueiam o preço):
+  // monta os cgIds e slugs DefiLlama das moedas monitoradas
+  let mcapPorCg = {}, tvlPorSlug = {};
+  try {
+    const cgIds = [];
+    const slugs = [];
+    for (const m of config.moedas) {
+      const cgId = fontes.MOEDAS_FORA_BINANCE[m.id]?.cgId || fontes.SIMBOLO_PARA_CG[m.simbolo];
+      if (cgId) cgIds.push(cgId);
+      const slug = fontes.MOEDAS_FORA_BINANCE[m.id]?.llama || fontes.SIMBOLO_PARA_LLAMA[m.simbolo];
+      if (slug) slugs.push(slug);
+    }
+    if (cgIds.length) mcapPorCg = await fontes.enriquecerMarketCap([...new Set(cgIds)]);
+    if (slugs.length) tvlPorSlug = await fontes.enriquecerTVL([...new Set(slugs)]);
+  } catch (e) { /* enriquecimento é opcional */ }
+
   for (const moeda of config.moedas) {
     const dados = precos[moeda.id];
     if (!dados) continue;
+
+    // pega market cap / FDV / TVL reais (quando disponíveis)
+    const cgId = fontes.MOEDAS_FORA_BINANCE[moeda.id]?.cgId || fontes.SIMBOLO_PARA_CG[moeda.simbolo];
+    const slug = fontes.MOEDAS_FORA_BINANCE[moeda.id]?.llama || fontes.SIMBOLO_PARA_LLAMA[moeda.simbolo];
+    const extra = cgId ? mcapPorCg[cgId] : null;
+    const tvl = slug ? tvlPorSlug[slug] : null;
 
     const precoAnterior = precosAtuais[moeda.id]?.preco;
     precosAtuais[moeda.id] = {
       preco: dados.usd,
       variacao24h: dados.usd_24h_change,
-      marketCap: dados.usd_market_cap,
+      marketCap: extra?.marketCap ?? null,   // real do CoinGecko (não mais proxy)
+      fdv: extra?.fdv ?? null,
+      supply: extra?.supply ?? null,
       volume: dados.usd_24h_vol,
+      tvl: tvl ?? null,
     };
 
     // Atualiza análise técnica (busca histórico 30d p/ ter dados suficientes)
