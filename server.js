@@ -110,27 +110,63 @@ function salvarAprendizado() {
 // ============================================================
 // COINGECKO - API gratuita, sem chave necessária
 // ============================================================
-const CG = 'https://api.coingecko.com/api/v3';
+// FONTE DE DADOS: BINANCE (API pública, limite alto, grátis)
+// Trocamos o CoinGecko pela Binance para acabar com o erro 429.
+// A Binance aguenta muito mais chamadas (milhares/min).
+//
+// Diferenças tratadas aqui:
+//  - Binance usa pares tipo "BTCUSDT"; o resto do app usa id "bitcoin".
+//    Mantemos um mapa id->símbolo para traduzir.
+//  - Preço/histórico vêm de endpoints diferentes (ticker / klines).
+//  - Mantemos as MESMAS assinaturas de função para não quebrar o resto.
+// ============================================================
+const BINANCE = 'https://api.binance.com/api/v3';
 
 // Cache da lista de moedas (atualiza 1x por dia)
 let listaMoedas = [];
 let listaMoedasTimestamp = 0;
 
+// Mapa id (coingecko-style) -> info da Binance. Construído ao carregar a lista.
+// ex: { bitcoin: { symbol:'BTCUSDT', base:'BTC', nome:'Bitcoin' } }
+let mapaIdParaBinance = {};
+let mapaSimboloParaId = {}; // BTC -> bitcoin
+
+// Nomes amigáveis das principais moedas (a Binance só dá o ticker, não o nome completo)
+const NOMES_MOEDAS = {
+  BTC: 'Bitcoin', ETH: 'Ethereum', BNB: 'BNB', SOL: 'Solana', XRP: 'XRP',
+  ADA: 'Cardano', DOGE: 'Dogecoin', TRX: 'TRON', DOT: 'Polkadot', MATIC: 'Polygon',
+  LTC: 'Litecoin', SHIB: 'Shiba Inu', AVAX: 'Avalanche', LINK: 'Chainlink', ATOM: 'Cosmos',
+  UNI: 'Uniswap', XLM: 'Stellar', XMR: 'Monero', ETC: 'Ethereum Classic', BCH: 'Bitcoin Cash',
+  FIL: 'Filecoin', APT: 'Aptos', NEAR: 'NEAR Protocol', ICP: 'Internet Computer', VET: 'VeChain',
+  HBAR: 'Hedera', ARB: 'Arbitrum', OP: 'Optimism', AAVE: 'Aave', GRT: 'The Graph',
+  ALGO: 'Algorand', SAND: 'The Sandbox', MANA: 'Decentraland', AXS: 'Axie Infinity', EOS: 'EOS',
+  FTM: 'Fantom', THETA: 'Theta', XTZ: 'Tezos', EGLD: 'MultiversX', FLOW: 'Flow',
+  CHZ: 'Chiliz', ENJ: 'Enjin', ZEC: 'Zcash', DASH: 'Dash', NEO: 'Neo',
+  KSM: 'Kusama', CRV: 'Curve', MKR: 'Maker', COMP: 'Compound', SNX: 'Synthetix',
+  SUI: 'Sui', SEI: 'Sei', INJ: 'Injective', RUNE: 'THORChain', LDO: 'Lido DAO',
+  PEPE: 'Pepe', WLD: 'Worldcoin', TIA: 'Celestia', JUP: 'Jupiter', RENDER: 'Render',
+  IMX: 'Immutable', STX: 'Stacks', FET: 'Fetch.ai', GALA: 'Gala', FLOKI: 'Floki',
+};
+
+// id "coingecko-style" derivado do ticker (bitcoin, ethereum...) para casar com carteira antiga
+function idDeSimbolo(base) {
+  const nome = NOMES_MOEDAS[base];
+  if (nome) return nome.toLowerCase().replace(/\s+/g, '-').replace(/\./g, '');
+  return base.toLowerCase();
+}
+
 // ============================================================
-// REQUISIÇÃO COM RETRY: se a API responder 429 (limite excedido),
-// espera e tenta de novo (backoff exponencial). Isso resolve o
-// problema de "lista de moedas não carrega" no plano grátis.
+// REQUISIÇÃO COM RETRY (mantida — útil para qualquer instabilidade)
 // ============================================================
-async function cgGet(url, params = {}, tentativas = 4) {
+async function apiGet(url, params = {}, tentativas = 3) {
   for (let i = 0; i < tentativas; i++) {
     try {
       return await axios.get(url, { params, timeout: 20000 });
     } catch (e) {
       const status = e.response?.status;
-      if (status === 429 && i < tentativas - 1) {
-        // espera crescente: 3s, 6s, 12s...
-        const espera = 3000 * Math.pow(2, i);
-        console.log(`⏳ Limite da API (429). Aguardando ${espera/1000}s antes de tentar de novo...`);
+      if ((status === 429 || status === 418 || status >= 500) && i < tentativas - 1) {
+        const espera = 2000 * Math.pow(2, i);
+        console.log(`⏳ API instável (${status}). Aguardando ${espera/1000}s...`);
         await new Promise((r) => setTimeout(r, espera));
         continue;
       }
@@ -139,66 +175,98 @@ async function cgGet(url, params = {}, tentativas = 4) {
   }
 }
 
-// Cache simples de histórico para reduzir chamadas repetidas (10 min)
+// Cache simples de histórico (10 min)
 const cacheHistorico = {};
 function chaveCache(id, dias) { return `${id}_${dias}`; }
 
+// ------------------------------------------------------------
+// Lista as moedas: pega os pares USDT da Binance com mais volume.
+// ------------------------------------------------------------
 async function buscarListaMoedas() {
   const agora = Date.now();
-  // cache por 24 horas
   if (listaMoedas.length > 0 && agora - listaMoedasTimestamp < 86400000) {
     return listaMoedas;
   }
   try {
-    // Top 250 moedas — uma página só para reduzir requisições
+    // 24h ticker de TODOS os pares — uma única chamada
+    const r = await apiGet(`${BINANCE}/ticker/24hr`);
+    // filtra só pares contra USDT, ignora alavancados (UP/DOWN/BULL/BEAR)
+    const pares = r.data
+      .filter((t) => t.symbol.endsWith('USDT'))
+      .filter((t) => !/(UP|DOWN|BULL|BEAR)USDT$/.test(t.symbol))
+      .map((t) => ({
+        symbol: t.symbol,
+        base: t.symbol.replace(/USDT$/, ''),
+        volume: parseFloat(t.quoteVolume) || 0,
+        preco: parseFloat(t.lastPrice) || 0,
+        variacao: parseFloat(t.priceChangePercent) || 0,
+      }))
+      // ordena por volume (proxy de "as mais relevantes")
+      .sort((a, b) => b.volume - a.volume)
+      .slice(0, 250);
+
     const todas = [];
-    const r = await cgGet(`${CG}/coins/markets`, {
-      vs_currency: 'usd',
-      order: 'market_cap_desc',
-      per_page: 250,
-      page: 1,
-      sparkline: false,
-    });
-    r.data.forEach((c) => {
+    mapaIdParaBinance = {};
+    mapaSimboloParaId = {};
+    pares.forEach((p, idx) => {
+      const id = idDeSimbolo(p.base);
+      const nome = NOMES_MOEDAS[p.base] || p.base;
       todas.push({
-        id: c.id,
-        nome: c.name,
-        simbolo: c.symbol.toUpperCase(),
-        imagem: c.image,
-        rank: c.market_cap_rank,
+        id,
+        nome,
+        simbolo: p.base,
+        imagem: '', // Binance não fornece logo; front trata ausência
+        rank: idx + 1,
       });
+      mapaIdParaBinance[id] = { symbol: p.symbol, base: p.base, nome };
+      mapaSimboloParaId[p.base] = id;
     });
     listaMoedas = todas;
     listaMoedasTimestamp = agora;
-    console.log(`✅ Lista de ${todas.length} moedas carregada (top 250)`);
+    console.log(`✅ Lista de ${todas.length} moedas carregada (Binance, por volume)`);
   } catch (e) {
     console.error('Erro ao buscar lista de moedas:', e.message);
   }
   return listaMoedas;
 }
 
+// Garante que o mapa exista (caso peçam preço antes de carregar a lista)
+async function garantirMapa() {
+  if (Object.keys(mapaIdParaBinance).length === 0) await buscarListaMoedas();
+}
+
+// Resolve o símbolo Binance a partir de um id (bitcoin -> BTCUSDT)
+function symbolDeId(id) {
+  if (mapaIdParaBinance[id]) return mapaIdParaBinance[id].symbol;
+  // fallback: tenta achar pelo próprio id como ticker
+  const guess = id.toUpperCase().replace(/-/g, '') + 'USDT';
+  return guess;
+}
+
+// ------------------------------------------------------------
+// Preços atuais de uma lista de ids. Devolve no MESMO formato que o
+// app já espera: { id: { usd, usd_24h_change, usd_market_cap, usd_24h_vol } }
+// ------------------------------------------------------------
 async function buscarPrecos(ids) {
   if (!ids.length) return {};
+  await garantirMapa();
   try {
-    // limita a 50 IDs por requisição para não exceder URL length
-    const chunks = [];
-    for (let i = 0; i < ids.length; i += 50) {
-      chunks.push(ids.slice(i, i + 50));
-    }
-    let resultado = {};
-    for (const chunk of chunks) {
-      const r = await cgGet(`${CG}/simple/price`, {
-        ids: chunk.join(','),
-        vs_currencies: 'usd',
-        include_market_cap: true,
-        include_24hr_vol: true,
-        include_24hr_change: true,
-      });
-      resultado = { ...resultado, ...r.data };
-      // delay entre chunks para respeitar rate limit
-      if (chunks.indexOf(chunk) < chunks.length - 1) {
-        await new Promise((r) => setTimeout(r, 1200));
-      }
+    // uma chamada só traz todos os tickers; filtramos os que queremos
+    const r = await apiGet(`${BINANCE}/ticker/24hr`);
+    const porSymbol = {};
+    r.data.forEach((t) => { porSymbol[t.symbol] = t; });
+
+    const resultado = {};
+    for (const id of ids) {
+      const symbol = symbolDeId(id);
+      const t = porSymbol[symbol];
+      if (!t) continue;
+      resultado[id] = {
+        usd: parseFloat(t.lastPrice),
+        usd_24h_change: parseFloat(t.priceChangePercent),
+        usd_market_cap: parseFloat(t.quoteVolume), // Binance não dá mcap; usamos volume como proxy
+        usd_24h_vol: parseFloat(t.quoteVolume),
+      };
     }
     return resultado;
   } catch (e) {
@@ -207,47 +275,61 @@ async function buscarPrecos(ids) {
   }
 }
 
+// ------------------------------------------------------------
+// Histórico de preços (candles diários). Devolve [{t, preco}, ...]
+// dias: quantos dias para trás.
+// ------------------------------------------------------------
 async function buscarHistorico(id, dias = 7) {
-  // checa cache (válido por 10 min) para reduzir chamadas
   const chave = chaveCache(id, dias);
   const cache = cacheHistorico[chave];
-  if (cache && Date.now() - cache.ts < 600000) {
-    return cache.dados;
-  }
+  if (cache && Date.now() - cache.ts < 600000) return cache.dados;
+
+  await garantirMapa();
   try {
-    const r = await cgGet(`${CG}/coins/${id}/market_chart`, {
-      vs_currency: 'usd', days: dias,
-    });
-    // retorna [[timestamp, preco], ...]
-    const dados = r.data.prices.map((p) => ({ t: p[0], preco: p[1] }));
+    const symbol = symbolDeId(id);
+    // intervalo: usa candles diários; para 1 dia usa de hora em hora p/ ter pontos
+    let interval = '1d';
+    let limit = dias + 5;
+    if (dias <= 1) { interval = '1h'; limit = 24; }
+    else if (dias <= 7) { interval = '4h'; limit = dias * 6; }
+    if (limit > 1000) limit = 1000;
+
+    const r = await apiGet(`${BINANCE}/klines`, { symbol, interval, limit });
+    // cada kline: [openTime, open, high, low, close, volume, closeTime, ...]
+    const dados = r.data.map((k) => ({ t: k[0], preco: parseFloat(k[4]) }));
     cacheHistorico[chave] = { ts: Date.now(), dados };
     return dados;
   } catch (e) {
     console.error(`Erro histórico ${id}:`, e.message);
-    // se deu erro mas tem cache antigo, usa ele
     if (cache) return cache.dados;
     return [];
   }
 }
 
-// Busca o preço de uma moeda numa data específica (formato dd-mm-yyyy)
+// ------------------------------------------------------------
+// Preço numa data específica (para "comprei nesta data"). Usa klines
+// no dia pedido e pega o fechamento.
+// ------------------------------------------------------------
 async function buscarPrecoNaData(id, dataISO) {
+  await garantirMapa();
   try {
+    const symbol = symbolDeId(id);
     const d = new Date(dataISO);
-    const dd = String(d.getDate()).padStart(2, '0');
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const yyyy = d.getFullYear();
-    const r = await cgGet(`${CG}/coins/${id}/history`, {
-      date: `${dd}-${mm}-${yyyy}`, localization: false,
+    if (isNaN(d.getTime()) || d > new Date()) return null; // data inválida/futura
+    const inicio = d.setHours(0, 0, 0, 0);
+    const fim = inicio + 24 * 60 * 60 * 1000;
+    const r = await apiGet(`${BINANCE}/klines`, {
+      symbol, interval: '1d', startTime: inicio, endTime: fim, limit: 1,
     });
-    return r.data?.market_data?.current_price?.usd ?? null;
+    if (!r.data || !r.data.length) return null;
+    return parseFloat(r.data[0][4]); // fechamento do dia
   } catch (e) {
     console.error(`Erro preço na data ${id}:`, e.message);
     return null;
   }
 }
 
-// Variação percentual de uma moeda entre uma data e hoje
+// Variação percentual entre uma data e hoje
 async function variacaoDesdeData(id, dataISO) {
   const precoCompra = await buscarPrecoNaData(id, dataISO);
   const atual = precosAtuais[id]?.preco || (await buscarPrecos([id]))[id]?.usd;
