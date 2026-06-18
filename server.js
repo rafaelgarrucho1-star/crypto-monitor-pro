@@ -9,6 +9,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const analise = require('./analise');
+const aprendizado = require('./aprendizado');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -90,6 +91,23 @@ let historicoAlertas = [];
 let ultimoEstadoAlerta = {}; // controle p/ não repetir alerta
 
 // ============================================================
+// APRENDIZADO: pesos otimizados + histórico de sinais reais
+// ============================================================
+const APRENDIZADO_PATH = path.join(__dirname, 'aprendizado.json');
+let estadoAprendizado = { pesos: null, sinais: [], ultimaOtimizacao: null, historicoTaxa: [] };
+try {
+  if (fs.existsSync(APRENDIZADO_PATH)) {
+    estadoAprendizado = JSON.parse(fs.readFileSync(APRENDIZADO_PATH, 'utf8'));
+  }
+} catch (e) { console.warn('Aprendizado: começando do zero'); }
+
+function salvarAprendizado() {
+  try {
+    fs.writeFileSync(APRENDIZADO_PATH, JSON.stringify(estadoAprendizado, null, 2));
+  } catch (e) { /* disco efêmero no Render free — ok */ }
+}
+
+// ============================================================
 // COINGECKO - API gratuita, sem chave necessária
 // ============================================================
 const CG = 'https://api.coingecko.com/api/v3';
@@ -97,6 +115,33 @@ const CG = 'https://api.coingecko.com/api/v3';
 // Cache da lista de moedas (atualiza 1x por dia)
 let listaMoedas = [];
 let listaMoedasTimestamp = 0;
+
+// ============================================================
+// REQUISIÇÃO COM RETRY: se a API responder 429 (limite excedido),
+// espera e tenta de novo (backoff exponencial). Isso resolve o
+// problema de "lista de moedas não carrega" no plano grátis.
+// ============================================================
+async function cgGet(url, params = {}, tentativas = 4) {
+  for (let i = 0; i < tentativas; i++) {
+    try {
+      return await axios.get(url, { params, timeout: 20000 });
+    } catch (e) {
+      const status = e.response?.status;
+      if (status === 429 && i < tentativas - 1) {
+        // espera crescente: 3s, 6s, 12s...
+        const espera = 3000 * Math.pow(2, i);
+        console.log(`⏳ Limite da API (429). Aguardando ${espera/1000}s antes de tentar de novo...`);
+        await new Promise((r) => setTimeout(r, espera));
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
+// Cache simples de histórico para reduzir chamadas repetidas (10 min)
+const cacheHistorico = {};
+function chaveCache(id, dias) { return `${id}_${dias}`; }
 
 async function buscarListaMoedas() {
   const agora = Date.now();
@@ -107,15 +152,12 @@ async function buscarListaMoedas() {
   try {
     // Top 250 moedas — uma página só para reduzir requisições
     const todas = [];
-    const r = await axios.get(`${CG}/coins/markets`, {
-      params: {
-        vs_currency: 'usd',
-        order: 'market_cap_desc',
-        per_page: 250,
-        page: 1,
-        sparkline: false,
-      },
-      timeout: 15000,
+    const r = await cgGet(`${CG}/coins/markets`, {
+      vs_currency: 'usd',
+      order: 'market_cap_desc',
+      per_page: 250,
+      page: 1,
+      sparkline: false,
     });
     r.data.forEach((c) => {
       todas.push({
@@ -145,15 +187,12 @@ async function buscarPrecos(ids) {
     }
     let resultado = {};
     for (const chunk of chunks) {
-      const r = await axios.get(`${CG}/simple/price`, {
-        params: {
-          ids: chunk.join(','),
-          vs_currencies: 'usd',
-          include_market_cap: true,
-          include_24hr_vol: true,
-          include_24hr_change: true,
-        },
-        timeout: 15000,
+      const r = await cgGet(`${CG}/simple/price`, {
+        ids: chunk.join(','),
+        vs_currencies: 'usd',
+        include_market_cap: true,
+        include_24hr_vol: true,
+        include_24hr_change: true,
       });
       resultado = { ...resultado, ...r.data };
       // delay entre chunks para respeitar rate limit
@@ -169,15 +208,24 @@ async function buscarPrecos(ids) {
 }
 
 async function buscarHistorico(id, dias = 7) {
+  // checa cache (válido por 10 min) para reduzir chamadas
+  const chave = chaveCache(id, dias);
+  const cache = cacheHistorico[chave];
+  if (cache && Date.now() - cache.ts < 600000) {
+    return cache.dados;
+  }
   try {
-    const r = await axios.get(`${CG}/coins/${id}/market_chart`, {
-      params: { vs_currency: 'usd', days: dias },
-      timeout: 15000,
+    const r = await cgGet(`${CG}/coins/${id}/market_chart`, {
+      vs_currency: 'usd', days: dias,
     });
     // retorna [[timestamp, preco], ...]
-    return r.data.prices.map((p) => ({ t: p[0], preco: p[1] }));
+    const dados = r.data.prices.map((p) => ({ t: p[0], preco: p[1] }));
+    cacheHistorico[chave] = { ts: Date.now(), dados };
+    return dados;
   } catch (e) {
     console.error(`Erro histórico ${id}:`, e.message);
+    // se deu erro mas tem cache antigo, usa ele
+    if (cache) return cache.dados;
     return [];
   }
 }
@@ -189,9 +237,8 @@ async function buscarPrecoNaData(id, dataISO) {
     const dd = String(d.getDate()).padStart(2, '0');
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const yyyy = d.getFullYear();
-    const r = await axios.get(`${CG}/coins/${id}/history`, {
-      params: { date: `${dd}-${mm}-${yyyy}`, localization: false },
-      timeout: 15000,
+    const r = await cgGet(`${CG}/coins/${id}/history`, {
+      date: `${dd}-${mm}-${yyyy}`, localization: false,
     });
     return r.data?.market_data?.current_price?.usd ?? null;
   } catch (e) {
@@ -265,6 +312,25 @@ async function cicloMonitoramento() {
         const precosArr = hist.map((h) => h.preco);
         const resultado = analise.scoreConsolidado(precosArr);
         analiseCache[moeda.id] = { ...resultado, timestamp: Date.now() };
+
+        // APRENDIZADO: registra sinais claros (compra/venda) para
+        // conferir o resultado real daqui a 7 dias. Evita duplicar:
+        // só registra 1x por moeda a cada 24h.
+        if (resultado.perfil !== 'NEUTRO') {
+          const ultimoDoId = (estadoAprendizado.sinais || [])
+            .filter((s) => s.id === moeda.id).slice(-1)[0];
+          const passou24h = !ultimoDoId || (Date.now() - ultimoDoId.data > 86400000);
+          if (passou24h) {
+            aprendizado.registrarSinal(estadoAprendizado, {
+              id: moeda.id,
+              perfil: resultado.perfil,
+              score: resultado.score,
+              preco: dados.usd,
+              horizonte: 7,
+            });
+            salvarAprendizado();
+          }
+        }
 
         // Verifica gatilhos de alerta
         verificarAlertas(moeda, dados, precoAnterior, resultado);
@@ -822,6 +888,97 @@ app.post('/api/registrar-analise/:sessao', (req, res) => {
   res.json({ ok: true, usados: contadorAnalises[req.params.sessao] || 0 });
 });
 
+// ============================================================
+// BACKTEST GRANDE + OTIMIZAÇÃO ONLINE
+// Roda no Render (que tem internet). Baixa histórico de 1 ano das
+// top N moedas, otimiza os pesos com separação treino/teste, e
+// guarda os melhores pesos validados. Honesto: a taxa que vale é
+// a do conjunto de TESTE (nunca vista na otimização).
+//
+// ATENÇÃO: é uma operação LONGA (baixar 100 moedas respeitando o
+// limite da API pode levar vários minutos). Por isso roda em
+// segundo plano e o progresso é consultável.
+// ============================================================
+let backtestEmAndamento = false;
+let backtestProgresso = { rodando: false, etapa: '', baixadas: 0, total: 0, resultado: null };
+
+app.post('/api/otimizar', async (req, res) => {
+  if (backtestEmAndamento) {
+    return res.json({ jaRodando: true, progresso: backtestProgresso });
+  }
+  const quantasMoedas = Math.min(parseInt(req.body?.moedas) || 100, 100);
+  const dias = parseInt(req.body?.dias) || 365;
+  const horizonte = parseInt(req.body?.horizonte) || 7;
+
+  backtestEmAndamento = true;
+  backtestProgresso = { rodando: true, etapa: 'Carregando lista de moedas...', baixadas: 0, total: quantasMoedas, resultado: null };
+  res.json({ iniciado: true, total: quantasMoedas });
+
+  // roda em segundo plano (não trava a resposta)
+  (async () => {
+    try {
+      const lista = await buscarListaMoedas();
+      const ids = lista.slice(0, quantasMoedas).map((m) => m.id);
+      const series = [];
+      backtestProgresso.etapa = 'Baixando histórico de 1 ano (respeitando limite da API)...';
+      for (let i = 0; i < ids.length; i++) {
+        try {
+          const hist = await buscarHistorico(ids[i], dias);
+          if (hist.length >= 70) series.push(hist.map((h) => h.preco));
+          backtestProgresso.baixadas = i + 1;
+        } catch (e) { /* pula moeda que falhou */ }
+        // respeita o rate limit do plano grátis
+        await new Promise((r) => setTimeout(r, 2800));
+      }
+
+      backtestProgresso.etapa = `Otimizando pesos sobre ${series.length} moedas (treino/teste)...`;
+      const resultado = aprendizado.otimizar(series, horizonte);
+
+      if (!resultado.erro) {
+        // só adota os novos pesos se a taxa de TESTE for boa o suficiente
+        // e o overfit for pequeno (generaliza bem)
+        estadoAprendizado.pesos = resultado.pesos;
+        estadoAprendizado.ultimaOtimizacao = {
+          data: Date.now(),
+          taxaTeste: resultado.taxaTeste,
+          taxaTreino: resultado.taxaTreino,
+          sinaisTeste: resultado.sinaisTeste,
+          moedas: series.length,
+          dias, horizonte,
+        };
+        estadoAprendizado.historicoTaxa = estadoAprendizado.historicoTaxa || [];
+        estadoAprendizado.historicoTaxa.push({ data: Date.now(), taxa: resultado.taxaTeste });
+        salvarAprendizado();
+      }
+
+      backtestProgresso.resultado = resultado;
+      backtestProgresso.etapa = 'Concluído';
+      backtestProgresso.rodando = false;
+    } catch (e) {
+      backtestProgresso.etapa = 'Erro: ' + e.message;
+      backtestProgresso.rodando = false;
+    } finally {
+      backtestEmAndamento = false;
+    }
+  })();
+});
+
+app.get('/api/otimizar/progresso', (req, res) => {
+  res.json(backtestProgresso);
+});
+
+// Estado do aprendizado: pesos atuais, taxa real acumulada, histórico
+app.get('/api/aprendizado', (req, res) => {
+  const real = aprendizado.taxaRealAcumulada(estadoAprendizado);
+  res.json({
+    pesos: estadoAprendizado.pesos,
+    ultimaOtimizacao: estadoAprendizado.ultimaOtimizacao,
+    taxaRealAcumulada: real,
+    totalSinaisRegistrados: (estadoAprendizado.sinais || []).length,
+    historicoTaxa: estadoAprendizado.historicoTaxa || [],
+  });
+});
+
 app.get('/api/status', (req, res) => {
   res.json({
     moedas: config.moedas.length,
@@ -850,4 +1007,36 @@ app.listen(PORT, () => {
   // verifica expiração de assinantes a cada hora
   atualizarExpiracoes();
   setInterval(atualizarExpiracoes, 3600000);
+
+  // ============================================================
+  // PING ANTI-SONO: o Render free dorme após 15 min de inatividade.
+  // Aqui o próprio app se "pinga" a cada 10 min para continuar acordado.
+  // (Só funciona se RENDER_EXTERNAL_URL estiver definido — o Render
+  // define isso automaticamente em produção.)
+  // ============================================================
+  const urlPublica = process.env.RENDER_EXTERNAL_URL;
+  if (urlPublica) {
+    setInterval(async () => {
+      try {
+        await axios.get(`${urlPublica}/api/status`, { timeout: 10000 });
+        console.log('🏓 Ping anti-sono enviado');
+      } catch (e) { /* ignora */ }
+    }, 10 * 60 * 1000); // a cada 10 minutos
+    console.log('🏓 Ping anti-sono ativado (a cada 10 min)');
+  }
+
+  // ============================================================
+  // CONFERÊNCIA DE SINAIS: a cada hora, confere sinais cujo horizonte
+  // já passou e atualiza a taxa de acerto REAL acumulada (aprendizado).
+  // ============================================================
+  setInterval(() => {
+    const precoPorId = {};
+    for (const id in precosAtuais) precoPorId[id] = precosAtuais[id].preco;
+    const { conferidos } = aprendizado.conferirSinais(estadoAprendizado, precoPorId);
+    if (conferidos > 0) {
+      salvarAprendizado();
+      const real = aprendizado.taxaRealAcumulada(estadoAprendizado);
+      console.log(`📊 ${conferidos} sinais conferidos. Taxa real acumulada: ${real.taxa ? real.taxa.toFixed(1) + '%' : 'aguardando'} (${real.total} sinais)`);
+    }
+  }, 3600000);
 });

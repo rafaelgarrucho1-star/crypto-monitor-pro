@@ -269,6 +269,46 @@
         <input type="number" id="admGratis" value="1" min="0" onchange="salvarAdminConfig()" style="max-width:120px">
       </div>
 
+      <!-- ===================== IA / BACKTEST ===================== -->
+      <div class="admin-card">
+        <b style="font-size:15px;color:#7c9eff">🧠 Otimização & Aprendizado da Fórmula</b>
+        <p style="font-size:12px;color:#9aa3b2;margin:8px 0 14px">
+          Roda um backtest grande (até 100 moedas, 1 ano de histórico) e ajusta os pesos
+          da fórmula. Usa separação treino/teste — a taxa que vale é a do TESTE (honesta,
+          não decorada). <b>Pode levar vários minutos</b> porque respeita o limite da API gratuita.
+        </p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <label style="margin:0">Moedas
+            <select id="optMoedas" style="width:auto;margin:0 0 0 6px;display:inline-block">
+              <option value="30">30 (rápido ~2min)</option>
+              <option value="50">50 (~4min)</option>
+              <option value="100" selected>100 (completo ~8min)</option>
+            </select>
+          </label>
+          <label style="margin:0">Horizonte
+            <select id="optHorizonte" style="width:auto;margin:0 0 0 6px;display:inline-block">
+              <option value="7" selected>7 dias</option>
+              <option value="14">14 dias</option>
+              <option value="30">30 dias</option>
+            </select>
+          </label>
+          <button class="btn btn-primary" onclick="rodarOtimizacao()" id="btnOtimizar">🚀 Rodar backtest + otimizar</button>
+        </div>
+        <div id="optProgresso" style="margin-top:14px;font-size:13px;color:#d4c373"></div>
+        <div id="optResultado" style="margin-top:14px"></div>
+      </div>
+
+      <!-- ===================== TAXA REAL ACUMULADA ===================== -->
+      <div class="admin-card">
+        <b style="font-size:15px;color:#7c9eff">📊 Taxa de acerto REAL (aprendizado ao vivo)</b>
+        <p style="font-size:12px;color:#9aa3b2;margin:8px 0 14px">
+          Conforme o app roda, cada sinal de compra/venda é registrado e conferido 7 dias depois
+          com o preço real. Esta é a taxa de acerto medida na prática — começa vazia e vai
+          ganhando confiança com o tempo.
+        </p>
+        <div id="taxaRealBox" style="font-size:14px;color:#e6e8ec">Carregando...</div>
+      </div>
+
       <div class="admin-card">
         <b style="font-size:15px;color:#7c9eff">📊 Visão geral</b>
         <div class="indicadores" id="admStats" style="margin-top:12px"></div>
@@ -867,6 +907,98 @@ async function conectarMetamask(){
   }
 }
 
+// ---------- IA / BACKTEST / APRENDIZADO ----------
+let optPollTimer = null;
+
+async function rodarOtimizacao(){
+  const moedas = document.getElementById('optMoedas').value;
+  const horizonte = document.getElementById('optHorizonte').value;
+  const btn = document.getElementById('btnOtimizar');
+  const prog = document.getElementById('optProgresso');
+  const resBox = document.getElementById('optResultado');
+  resBox.innerHTML = '';
+  btn.disabled = true;
+  btn.textContent = '⏳ Rodando...';
+  prog.textContent = 'Iniciando backtest...';
+
+  try {
+    const r = await (await fetch(API+'/api/otimizar', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ moedas: parseInt(moedas), dias: 365, horizonte: parseInt(horizonte) })
+    })).json();
+
+    if (r.jaRodando) { prog.textContent = 'Já existe uma otimização rodando. Aguarde...'; }
+    // começa a consultar o progresso a cada 4s
+    if (optPollTimer) clearInterval(optPollTimer);
+    optPollTimer = setInterval(consultarProgresso, 4000);
+    consultarProgresso();
+  } catch(e) {
+    prog.textContent = 'Erro ao iniciar: ' + e.message;
+    btn.disabled = false; btn.textContent = '🚀 Rodar backtest + otimizar';
+  }
+}
+
+async function consultarProgresso(){
+  const prog = document.getElementById('optProgresso');
+  const resBox = document.getElementById('optResultado');
+  const btn = document.getElementById('btnOtimizar');
+  try {
+    const p = await (await fetch(API+'/api/otimizar/progresso')).json();
+    if (p.rodando) {
+      let txt = '⏳ ' + (p.etapa||'Processando...');
+      if (p.total) txt += ` (${p.baixadas}/${p.total} moedas)`;
+      prog.textContent = txt;
+    } else {
+      // terminou
+      clearInterval(optPollTimer); optPollTimer = null;
+      btn.disabled = false; btn.textContent = '🚀 Rodar backtest + otimizar';
+      prog.textContent = '✅ ' + (p.etapa || 'Concluído');
+      if (p.resultado) {
+        if (p.resultado.erro) {
+          resBox.innerHTML = `<div class="disclaimer">⚠️ ${p.resultado.erro}</div>`;
+        } else {
+          const r = p.resultado;
+          const corTeste = r.taxaTeste >= 65 ? '#3ddc84' : (r.taxaTeste >= 55 ? '#d4c373' : '#ff6b7a');
+          resBox.innerHTML = `
+            <div class="bench-box">
+              <div class="bench-linha"><span>Taxa no TREINO</span><b>${r.taxaTreino.toFixed(1)}%</b></div>
+              <div class="bench-linha"><span>Taxa no TESTE (vale esta)</span><b style="color:${corTeste}">${r.taxaTeste.toFixed(1)}%</b></div>
+              <div class="bench-linha"><span>Sinais no teste</span><b>${r.sinaisTeste}</b></div>
+              <div class="bench-linha"><span>Diferença treino-teste</span><b>${r.overfit.toFixed(1)} pts</b></div>
+              <div class="bench-linha"><span>Combinações testadas</span><b>${r.combinacoesTestadas}</b></div>
+            </div>
+            <div class="disclaimer" style="margin-top:10px">${r.veredito}</div>
+            <p style="font-size:12px;color:#9aa3b2;margin-top:8px">Pesos adotados: RSI ${r.pesos.rsi}, MACD ${r.pesos.macd}, Tendência ${r.pesos.tendencia}, Bollinger ${r.pesos.bollinger}, Fibonacci ${r.pesos.fibonacci} | Limiar compra ≥${r.pesos.limiarCompra}, venda ≤${r.pesos.limiarVenda}</p>`;
+        }
+      }
+      carregarAprendizado();
+    }
+  } catch(e){ /* segue tentando */ }
+}
+
+async function carregarAprendizado(){
+  const box = document.getElementById('taxaRealBox');
+  if (!box) return;
+  try {
+    const r = await (await fetch(API+'/api/aprendizado')).json();
+    let html = '';
+    if (r.taxaRealAcumulada && r.taxaRealAcumulada.taxa !== null) {
+      const t = r.taxaRealAcumulada;
+      const cor = t.taxa >= 65 ? '#3ddc84' : (t.taxa >= 55 ? '#d4c373' : '#ff6b7a');
+      html += `<div style="font-size:28px;font-weight:700;color:${cor}">${t.taxa.toFixed(1)}%</div>
+               <div style="font-size:12px;color:#9aa3b2">baseado em ${t.total} sinais reais já conferidos (${t.acertos} acertos)</div>`;
+    } else {
+      html += `<div style="color:#9aa3b2">Ainda coletando dados. Os primeiros sinais precisam de 7 dias para serem conferidos com o preço real. Volte em alguns dias.</div>`;
+    }
+    html += `<div style="font-size:12px;color:#6b7280;margin-top:10px">Sinais registrados aguardando conferência: ${r.totalSinaisRegistrados}</div>`;
+    if (r.ultimaOtimizacao) {
+      const d = new Date(r.ultimaOtimizacao.data).toLocaleString('pt-BR');
+      html += `<div style="font-size:12px;color:#6b7280;margin-top:6px">Última otimização: ${d} — teste ${r.ultimaOtimizacao.taxaTeste.toFixed(1)}% em ${r.ultimaOtimizacao.moedas} moedas</div>`;
+    }
+    box.innerHTML = html;
+  } catch(e){ box.innerHTML = '<span style="color:#9aa3b2">Erro ao carregar.</span>'; }
+}
+
 // ---------- ADMIN ----------
 let admGraf = null;
 
@@ -875,7 +1007,7 @@ function entrarAbaAdmin(){
     document.getElementById('adminSetup').classList.add('esconde');
     document.getElementById('adminLogin').classList.add('esconde');
     document.getElementById('adminPainel').classList.add('esconde');
-    if (adminCreds) { document.getElementById('adminPainel').classList.remove('esconde'); carregarDashboard(); }
+    if (adminCreds) { document.getElementById('adminPainel').classList.remove('esconde'); carregarDashboard(); carregarAprendizado(); }
     else if (!e.configurado) document.getElementById('adminSetup').classList.remove('esconde');
     else document.getElementById('adminLogin').classList.remove('esconde');
   });
