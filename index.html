@@ -322,15 +322,6 @@
 </div>
 
 <!-- PAYWALL (aparece quando monetização ligada e limite atingido) -->
-<div id="paywall" class="paywall esconde">
-  <div class="paywall-box">
-    <h2>🔓 Você usou sua análise grátis</h2>
-    <p style="color:#9aa3b2;font-size:14px">Para continuar vendo análises técnicas completas, escolha um plano:</p>
-    <div class="planos" id="paywallPlanos"></div>
-    <p style="font-size:11px;color:#6b7280">O pagamento será processado por gateway externo (em breve). Por enquanto esta é uma demonstração da estrutura.</p>
-    <button class="btn btn-danger btn-sm" onclick="fecharPaywall()" style="margin-top:14px">Fechar</button>
-  </div>
-</div>
 
 <script>
 const API = '';
@@ -543,16 +534,7 @@ document.querySelectorAll('#periodos .periodo-btn').forEach(b=>{
 });
 
 async function carregarGrafico(id){
-  // controle de monetização: verifica se pode analisar
-  if (monetizacao.ativa) {
-    const check = await (await fetch(API + '/api/pode-analisar/' + sessaoId)).json();
-    if (!check.liberado) { abrirPaywall(); return; }
-  }
   const r = await (await fetch(API + `/api/historico-grafico/${id}?dias=${diasGrafico}`)).json();
-  // registra consumo de análise
-  if (monetizacao.ativa) {
-    await fetch(API + '/api/registrar-analise/' + sessaoId, { method:'POST' });
-  }
   const labels = r.historico.map(h => new Date(h.t).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',hour:diasGrafico<=1?'2-digit':undefined,minute:diasGrafico<=1?'2-digit':undefined}));
   const precos = r.historico.map(h => h.preco);
 
@@ -856,47 +838,6 @@ async function carregarMonetizacao(){
   } catch(e){}
 }
 
-async function abrirPaywall(){
-  // recarrega os planos para garantir que não estão vazios
-  await carregarMonetizacao();
-  const el = document.getElementById('paywallPlanos');
-  if (!monetizacao.planos || !monetizacao.planos.length) {
-    el.innerHTML = '<p style="color:#9aa3b2">Nenhum plano configurado no momento.</p>';
-  } else {
-    el.innerHTML = monetizacao.planos.map((p)=>`
-      <div class="plano ${p.id==='mensal'?'destaque':''}" onclick="escolherPlano('${p.id}')">
-        <div class="pnome">${p.nome}</div>
-        <div class="ppreco">R$${p.preco.toFixed(2).replace('.',',')}</div>
-        <div class="pdia">R$${(p.preco/p.dias).toFixed(2).replace('.',',')}/dia</div>
-        ${p.id==='mensal'?'<div class="ptag">MELHOR VALOR</div>':''}
-      </div>`).join('');
-  }
-  document.getElementById('paywall').classList.remove('esconde');
-}
-
-function escolherPlano(planoId){
-  const p = monetizacao.planos.find(x=>x.id===planoId);
-  if(!p) return;
-  // Pagamento real ainda não está plugado — informa com clareza em vez de travar
-  const box = document.querySelector('#paywall .paywall-box');
-  box.innerHTML = `
-    <h2>📋 Plano ${p.nome} selecionado</h2>
-    <p style="color:#9aa3b2;font-size:14px;margin:12px 0">Valor: <b style="color:#e6e8ec">R$${p.preco.toFixed(2).replace('.',',')}</b> por ${p.dias} dias.</p>
-    <div class="disclaimer" style="text-align:left">💳 <b>Pagamento ainda não está ativo.</b> A cobrança real (Mercado Pago / Pix / cartão) é um passo que será plugado depois. Por enquanto, para liberar um assinante, o administrador cadastra o e-mail dele na aba Admin → Registrar assinante.</div>
-    <button class="btn btn-primary" onclick="fecharPaywall()" style="margin-top:14px">Entendi</button>`;
-}
-
-function fecharPaywall(){
-  document.getElementById('paywall').classList.add('esconde');
-  // restaura o conteúdo original da caixa (caso tenha sido trocado por escolherPlano)
-  const box = document.querySelector('#paywall .paywall-box');
-  box.innerHTML = `
-    <h2>🔓 Você usou sua análise grátis</h2>
-    <p style="color:#9aa3b2;font-size:14px">Para continuar vendo análises técnicas completas, escolha um plano:</p>
-    <div class="planos" id="paywallPlanos"></div>
-    <p style="font-size:11px;color:#6b7280">O pagamento será processado por gateway externo (em breve). Por enquanto esta é uma demonstração da estrutura.</p>
-    <button class="btn btn-danger btn-sm" onclick="fecharPaywall()" style="margin-top:14px">Fechar</button>`;
-}
 
 // ---------- METAMASK ----------
 async function conectarMetamask(){
