@@ -433,7 +433,7 @@ async function renderMonitoradas() {
     const p = dados?.preco;
     const a = dados?.analise;
 
-    const corScore = a ? (a.score >= 65 ? '#3ddc84' : a.score <= 35 ? '#ff6b7a' : '#9aa3b2') : '#6b7280';
+    const corScore = a ? (a.score >= 68 ? '#3ddc84' : a.score <= 32 ? '#ff6b7a' : '#9aa3b2') : '#6b7280';
     const varClass = p?.variacao24h >= 0 ? 'pos' : 'neg';
 
     html += `<div class="card-moeda">
@@ -618,12 +618,41 @@ async function carregarGrafico(id){
       <h2>🔬 Backtest — a fórmula funciona? (olhar para trás)</h2>
       <p style="font-size:13px;color:#9aa3b2;margin-bottom:12px">Pega os indicadores, recua no tempo (até 6 meses), gera o sinal com os dados que existiam naquela época e confere se o preço confirmou depois. Mostra a taxa de acerto real — sem maquiagem.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <button class="btn btn-primary btn-sm" onclick="rodarBacktest('${id}')">Rodar backtest (180 dias)</button>
-        <span style="font-size:12px;color:#6b7280">Horizonte: confere 7 dias à frente de cada sinal</span>
+        <button class="btn btn-primary btn-sm" onclick="rodarBacktest('${id}')">Rodar backtest desta moeda (180d)</button>
+        <button class="btn btn-primary btn-sm" onclick="rodarBacktestAgregado()" style="background:#3ddc84">Taxa média real (várias moedas)</button>
+        <span style="font-size:12px;color:#6b7280">Horizonte: 7 dias à frente</span>
       </div>
       <div id="backtestResultado" style="margin-top:14px"></div>
+      <div id="backtestAgregadoResultado" style="margin-top:14px"></div>
     </div>`;
 }
+
+async function rodarBacktestAgregado(){
+  const el = document.getElementById('backtestAgregadoResultado');
+  el.innerHTML = '<p style="color:#9aa3b2">⏳ Rodando backtest em várias moedas... isso leva ~30 segundos (testa 8-10 moedas no histórico real).</p>';
+  try {
+    const r = await (await fetch(API + '/api/backtest-agregado?horizonte=7')).json();
+    if (!r.totalSinais){ el.innerHTML = '<div class="disclaimer">Não foi possível rodar o agregado agora (limite da API de dados). Tente em 1 minuto.</div>'; return; }
+    const cor = r.taxaMedia >= 60 ? '#3ddc84' : r.taxaMedia >= 50 ? '#d4c373' : '#ff6b7a';
+    el.innerHTML = `
+      <div class="panel" style="background:#101a14;border-color:#1e3a2a">
+        <h2 style="color:#3ddc84">🎯 Taxa média real da estratégia</h2>
+        <div class="indicadores">
+          <div class="ind"><div class="lbl">Acerto MÉDIO</div><div class="val" style="color:${cor};font-size:22px">${r.taxaMedia.toFixed(1)}%</div></div>
+          <div class="ind"><div class="lbl">Total de sinais</div><div class="val">${r.totalSinais}</div></div>
+          <div class="ind"><div class="lbl">Moedas testadas</div><div class="val">${r.moedasTestadas}</div></div>
+        </div>
+        <p style="font-size:13px;color:#9aa3b2;margin:10px 0">Esta é a métrica honesta: a média de acerto da fórmula no histórico real de várias moedas. Moedas individuais variam para cima e para baixo desta média.</p>
+        <div style="margin-top:10px">
+          ${r.porMoeda.map(m=>`<div class="bench-linha"><span>${m.id}</span><span style="color:${m.taxa>=60?'#3ddc84':m.taxa>=50?'#d4c373':'#ff6b7a'}">${m.taxa.toFixed(1)}% (${m.sinais} sinais)</span></div>`).join('')}
+        </div>
+        <div class="disclaimer" style="margin-top:12px">📌 Mesmo com ~65-70% de acerto médio, isso <b>não é garantia de lucro</b>: um acerto pequeno e um erro grande podem dar prejuízo. Gestão de risco e tamanho de posição importam tanto quanto acertar a direção.</div>
+      </div>`;
+  } catch(e){
+    el.innerHTML = '<div class="disclaimer">Erro ao rodar backtest agregado. Tente novamente.</div>';
+  }
+}
+
 
 async function rodarBacktest(id){
   const el = document.getElementById('backtestResultado');

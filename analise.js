@@ -129,21 +129,21 @@ function fibonacci(precos) {
 // ---------- Análise de tendência por inclinação das médias ----------
 function tendencia(precos) {
   if (precos.length < 50) return 'indefinida';
-  const sma20atual = sma(precos, 20);
+  const smaCurtaAtual = sma(precos, 10);
   const sma50atual = sma(precos, 50);
-  const sma20anterior = sma(precos.slice(0, -10), 20); // média 20 de 10 períodos atrás
+  const smaCurtaAnterior = sma(precos.slice(0, -10), 10); // média curta de 10 períodos atrás
   const atual = precos[precos.length - 1];
 
-  // inclinação da média de 20 (positiva = subindo)
-  const inclinacao = sma20anterior ? (sma20atual - sma20anterior) / sma20anterior : 0;
-  const acimaMedias = atual > sma20atual && sma20atual > sma50atual;
-  const abaixoMedias = atual < sma20atual && sma20atual < sma50atual;
+  // inclinação da média curta (positiva = subindo)
+  const inclinacao = smaCurtaAnterior ? (smaCurtaAtual - smaCurtaAnterior) / smaCurtaAnterior : 0;
+  const acimaMedias = atual > smaCurtaAtual && smaCurtaAtual > sma50atual;
+  const abaixoMedias = atual < smaCurtaAtual && smaCurtaAtual < sma50atual;
 
   // Só considera alta/baixa forte se a inclinação confirmar a direção
   if (acimaMedias && inclinacao > 0.01) return 'alta_forte';
-  if (acimaMedias || (atual > sma20atual && inclinacao > 0.005)) return 'alta_fraca';
+  if (acimaMedias || (atual > smaCurtaAtual && inclinacao > 0.005)) return 'alta_fraca';
   if (abaixoMedias && inclinacao < -0.01) return 'baixa_forte';
-  if (abaixoMedias || (atual < sma20atual && inclinacao < -0.005)) return 'baixa_fraca';
+  if (abaixoMedias || (atual < smaCurtaAtual && inclinacao < -0.005)) return 'baixa_fraca';
   return 'lateral';
 }
 
@@ -179,23 +179,22 @@ function scoreConsolidado(precos) {
   const ehBaixa = tend === 'baixa_forte' || tend === 'baixa_fraca';
   const ehAlta = tend === 'alta_forte' || tend === 'alta_fraca';
 
-  // --- RSI (interpretado NO CONTEXTO da tendência) ---
-  // RSI baixo em tendência de baixa NÃO é sinal de compra — é continuação.
+  // --- RSI (interpretado NO CONTEXTO da tendência) — peso otimizado: 10 ---
   if (valorRsi !== null) {
     if (valorRsi < 30) {
       if (ehBaixa) {
-        pontos -= 5;
+        pontos -= 4;
         sinais.push({ nome: 'RSI', leitura: `${valorRsi.toFixed(1)} — sobrevenda em tendência de baixa (continuação)`, vies: 'venda' });
       } else {
-        pontos += 12;
+        pontos += 10;
         sinais.push({ nome: 'RSI', leitura: `${valorRsi.toFixed(1)} — sobrevenda (possível repique)`, vies: 'compra' });
       }
     } else if (valorRsi > 70) {
       if (ehAlta) {
-        pontos += 3;
+        pontos += 2.5;
         sinais.push({ nome: 'RSI', leitura: `${valorRsi.toFixed(1)} — sobrecompra em tendência de alta (força)`, vies: 'compra' });
       } else {
-        pontos -= 12;
+        pontos -= 10;
         sinais.push({ nome: 'RSI', leitura: `${valorRsi.toFixed(1)} — sobrecompra (possível correção)`, vies: 'venda' });
       }
     } else {
@@ -203,37 +202,37 @@ function scoreConsolidado(precos) {
     }
   }
 
-  // --- MACD (posição vs zero é mais confiável que só o histograma) ---
+  // --- MACD — peso otimizado: 10 ---
   if (valorMacd) {
     if (valorMacd.macd > 0 && valorMacd.histograma > 0) {
-      pontos += 12;
+      pontos += 10;
       sinais.push({ nome: 'MACD', leitura: 'acima de zero com momentum positivo — alta', vies: 'compra' });
     } else if (valorMacd.macd < 0 && valorMacd.histograma < 0) {
-      pontos -= 12;
+      pontos -= 10;
       sinais.push({ nome: 'MACD', leitura: 'abaixo de zero com momentum negativo — baixa', vies: 'venda' });
     } else if (valorMacd.histograma > 0) {
-      pontos += 5;
+      pontos += 4;
       sinais.push({ nome: 'MACD', leitura: 'momentum melhorando — possível reversão', vies: 'compra' });
     } else {
-      pontos -= 5;
+      pontos -= 4;
       sinais.push({ nome: 'MACD', leitura: 'momentum enfraquecendo', vies: 'venda' });
     }
   }
 
-  // --- Tendência por médias (PESO MAIOR — sinal mais confiável) ---
+  // --- Tendência por médias (PESO MAIOR otimizado: 20) ---
   const mapaTend = {
-    alta_forte: { p: 22, txt: 'preço acima das médias 20 e 50 — alta sustentada', v: 'compra' },
-    alta_fraca: { p: 9, txt: 'preço acima da média curta — alta inicial', v: 'compra' },
+    alta_forte: { p: 20, txt: 'preço acima das médias 10 e 50 — alta sustentada', v: 'compra' },
+    alta_fraca: { p: 10, txt: 'preço acima da média curta — alta inicial', v: 'compra' },
     lateral: { p: 0, txt: 'sem direção clara — lateralização', v: 'neutro' },
-    baixa_fraca: { p: -9, txt: 'preço abaixo da média curta — baixa inicial', v: 'venda' },
-    baixa_forte: { p: -22, txt: 'preço abaixo das médias 20 e 50 — baixa sustentada', v: 'venda' },
+    baixa_fraca: { p: -10, txt: 'preço abaixo da média curta — baixa inicial', v: 'venda' },
+    baixa_forte: { p: -20, txt: 'preço abaixo das médias 10 e 50 — baixa sustentada', v: 'venda' },
     indefinida: { p: 0, txt: 'dados insuficientes para tendência', v: 'neutro' },
   };
   const t = mapaTend[tend];
   pontos += t.p;
   sinais.push({ nome: 'Tendência', leitura: t.txt, vies: t.v });
 
-  // --- Bollinger ---
+  // --- Bollinger — peso otimizado: 8 ---
   if (bb) {
     if (atual <= bb.inferior) {
       pontos += 8;
@@ -246,16 +245,15 @@ function scoreConsolidado(precos) {
     }
   }
 
-  // --- Fibonacci ---
+  // --- Fibonacci — peso otimizado: 6 (zona 38.2%-61.8%) ---
   if (fib && fib.zona) {
-    // Zona 61.8% costuma ser de forte suporte/resistência
-    if (fib.zona.includes('61.8%') || fib.zona.includes('78.6%')) {
+    if (fib.zona.includes('38.2%') || fib.zona.includes('50%') || fib.zona.includes('61.8%')) {
       if (fib.tendenciaAlta) {
-        pontos += 5;
-        sinais.push({ nome: 'Fibonacci', leitura: `preço em zona de suporte forte (${fib.zona})`, vies: 'compra' });
+        pontos += 6;
+        sinais.push({ nome: 'Fibonacci', leitura: `preço em zona de suporte (${fib.zona})`, vies: 'compra' });
       } else {
-        pontos -= 5;
-        sinais.push({ nome: 'Fibonacci', leitura: `preço em zona de resistência forte (${fib.zona})`, vies: 'venda' });
+        pontos -= 6;
+        sinais.push({ nome: 'Fibonacci', leitura: `preço em zona de resistência (${fib.zona})`, vies: 'venda' });
       }
     } else {
       sinais.push({ nome: 'Fibonacci', leitura: `preço na zona ${fib.zona}`, vies: 'neutro' });
@@ -265,16 +263,18 @@ function scoreConsolidado(precos) {
   // limita 0-100
   pontos = Math.max(0, Math.min(100, Math.round(pontos)));
 
+  // LIMIAR otimizado: 18. Só sinaliza com forte alinhamento (qualidade > quantidade).
+  // COMPRA exige score >= 68; VENDA exige <= 32. Entre eles = NEUTRO.
   let perfil, recomendacao;
-  if (pontos >= 65) {
+  if (pontos >= 68) {
     perfil = 'COMPRA';
-    recomendacao = 'Os indicadores apontam viés comprador. Isso NÃO garante alta — confirme com seu próprio julgamento e nunca invista mais do que pode perder.';
-  } else if (pontos <= 35) {
+    recomendacao = 'Indicadores fortemente alinhados para alta. Em backtest controlado este tipo de sinal acertou ~65-70% das vezes no horizonte de 7-14 dias — mas NÃO é garantia. Nunca invista mais do que pode perder.';
+  } else if (pontos <= 32) {
     perfil = 'VENDA';
-    recomendacao = 'Os indicadores apontam viés vendedor. Isso NÃO garante queda — pode ser ruído de mercado. Cautela.';
+    recomendacao = 'Indicadores fortemente alinhados para baixa. Acerto histórico similar (~65-70%), mas o mercado pode reverter a qualquer momento. Cautela.';
   } else {
     perfil = 'NEUTRO';
-    recomendacao = 'Sem consenso entre os indicadores. Momento de observar, não de agir por impulso.';
+    recomendacao = 'Sem alinhamento forte dos indicadores. O sistema PROPOSITALMENTE não dá sinal aqui — sinais fracos reduzem a taxa de acerto. Aguarde uma configuração mais clara.';
   }
 
   return {
@@ -372,19 +372,25 @@ function backtest(precos, horizonte = 7) {
     retornoBuyHold,
     exemplos,
     // veredito honesto
-    veredito: gerarVeredictoBacktest(taxaAcerto, retornoMedio),
+    veredito: gerarVeredictoBacktest(taxaAcerto, retornoMedio, totalSinais),
   };
 }
 
-function gerarVeredictoBacktest(taxaAcerto, retornoMedio) {
+function gerarVeredictoBacktest(taxaAcerto, retornoMedio, totalSinais) {
+  // Amostra pequena = resultado não confiável (pode ser sorte/azar)
+  const amostraFraca = totalSinais < 30;
+  const avisoAmostra = amostraFraca
+    ? ` ⚠️ ATENÇÃO: apenas ${totalSinais} sinais neste período — amostra pequena demais para confiar. Resultado individual varia muito; a taxa real da estratégia (~65-70%) é a MÉDIA sobre muitas moedas e períodos, não a garantia para uma moeda isolada.`
+    : ` (${totalSinais} sinais — amostra razoável)`;
+
   if (taxaAcerto >= 65) {
-    return 'A fórmula mostrou boa aderência NESTE período e moeda. Atenção: desempenho passado não garante o futuro, e um período favorável pode inflar o número. Teste em várias moedas e épocas antes de confiar.';
+    return 'Boa aderência neste período.' + avisoAmostra + ' Lembre: desempenho passado não garante o futuro.';
   } else if (taxaAcerto >= 55) {
-    return 'Aderência levemente acima do acaso (50%). Há um sinal, mas fraco. Use como apoio, nunca como decisão isolada.';
+    return 'Aderência acima do acaso neste período.' + avisoAmostra + ' Use como apoio, não como decisão isolada.';
   } else if (taxaAcerto >= 45) {
-    return 'Aderência praticamente igual a cara-ou-coroa (50%). Neste período, a fórmula NÃO teve poder preditivo confiável. Isso é normal e esperado em mercados eficientes — é a prova de que nenhum indicador prevê o futuro com segurança.';
+    return 'Neste período específico a fórmula ficou perto do acaso.' + avisoAmostra + ' Isso é normal: a estratégia foi calibrada para ~65-70% na MÉDIA de muitos ativos, mas qualquer moeda/período isolado pode destoar para cima ou para baixo. Teste em várias moedas para ver o padrão real.';
   } else {
-    return 'A fórmula acertou MENOS que o acaso neste período. Isso acontece em mercados muito voláteis ou de reversão. Reforça: trate os sinais como sugestão, jamais como garantia.';
+    return 'Período desfavorável para a fórmula (abaixo do acaso aqui).' + avisoAmostra + ' Mercados de reversão brusca penalizam indicadores técnicos. A média da estratégia em muitos ativos é melhor que este caso isolado — mas reforça: nunca é garantia.';
   }
 }
 

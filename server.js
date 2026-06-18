@@ -409,6 +409,44 @@ app.get('/api/backtest/:id', async (req, res) => {
   res.json(resultado);
 });
 
+// BACKTEST AGREGADO — roda em várias moedas e mostra a taxa MÉDIA real
+// É a métrica honesta: a estratégia vale pela média, não por um ativo isolado.
+app.get('/api/backtest-agregado', async (req, res) => {
+  const horizonte = parseInt(req.query.horizonte) || 7;
+  // usa as moedas monitoradas; se não houver, usa um conjunto padrão
+  let ids = config.moedas.map((m) => m.id);
+  if (ids.length < 3) {
+    ids = ['bitcoin', 'ethereum', 'binancecoin', 'solana', 'cardano', 'ripple', 'polkadot', 'chainlink'];
+  }
+  ids = ids.slice(0, 10); // limita para não estourar rate limit
+
+  let totalSinais = 0, totalAcertos = 0;
+  const porMoeda = [];
+
+  for (const id of ids) {
+    try {
+      const hist = await buscarHistorico(id, 180);
+      if (hist.length < 70) continue;
+      const bt = analise.backtest(hist.map((h) => h.preco), horizonte);
+      if (bt.erro || !bt.totalSinais) continue;
+      totalSinais += bt.totalSinais;
+      totalAcertos += bt.acertos;
+      porMoeda.push({ id, taxa: bt.taxaAcerto, sinais: bt.totalSinais });
+      await new Promise((r) => setTimeout(r, 2500)); // rate limit
+    } catch (e) {}
+  }
+
+  const taxaMedia = totalSinais ? (totalAcertos / totalSinais) * 100 : 0;
+  res.json({
+    taxaMedia,
+    totalSinais,
+    totalAcertos,
+    moedasTestadas: porMoeda.length,
+    porMoeda: porMoeda.sort((a, b) => b.taxa - a.taxa),
+    horizonte,
+  });
+});
+
 app.get('/api/alertas', (req, res) => res.json(historicoAlertas));
 
 app.post('/api/telegram', async (req, res) => {
