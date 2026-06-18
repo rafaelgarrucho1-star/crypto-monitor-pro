@@ -60,12 +60,10 @@ function carregarConfig() {
     };
   }
   
-  // RESET DE SEGURANÇA: se monetização ficou ligada (config antiga),
-  // força desligar para o app ficar funcional
-  if (cfg.admin && cfg.admin.monetizacaoAtiva === true) {
-    console.log('⚠️ Monetização estava ligada (config antiga) — desligando automaticamente...');
+  // FORÇA MONETIZAÇÃO DESLIGADA SEMPRE
+  // Mesmo que o config antigo tenha true, ignora e coloca false
+  if (cfg.admin) {
     cfg.admin.monetizacaoAtiva = false;
-    salvarConfig(cfg);
   }
   
   return cfg;
