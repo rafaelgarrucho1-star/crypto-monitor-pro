@@ -345,7 +345,20 @@ function verificarAlertas(moeda, dados, precoAnterior, analiseResult) {
 // ============================================================
 // ROTAS DA API
 // ============================================================
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+app.get('/', (req, res) => {
+  // Lê o HTML e injeta script que desliga paywall SEMPRE
+  let html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+  // Injeta script antes de </head> que força monetizacao.ativa = false
+  const scriptAntiPaywall = `<script>
+  // FORÇA PAYWALL DESLIGADO — injetado pelo servidor
+  document.addEventListener('DOMContentLoaded', () => {
+    window.monetizacao = { ativa: false, analisesGratis: 1, planos: [] };
+  });
+</script>`;
+  html = html.replace('</head>', scriptAntiPaywall + '\n</head>');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.send(html);
+});
 
 app.get('/api/moedas-disponiveis', async (req, res) => {
   const lista = await buscarListaMoedas();
