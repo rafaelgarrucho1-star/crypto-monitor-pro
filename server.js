@@ -121,7 +121,19 @@ function salvarAprendizado() {
 //  - Preço/histórico vêm de endpoints diferentes (ticker / klines).
 //  - Mantemos as MESMAS assinaturas de função para não quebrar o resto.
 // ============================================================
-const BINANCE = 'https://api.binance.com/api/v3';
+// data-api.binance.vision: domínio público de dados de mercado da Binance.
+// Vários domínios da Binance — tentamos em ordem. Se o IP do servidor
+// estiver bloqueado em um (erro 451), tenta o próximo. Se todos falharem,
+// o sistema cai para o CoinGecko automaticamente (ver buscarListaMoedas).
+const BINANCE_HOSTS = [
+  'https://data-api.binance.vision/api/v3',
+  'https://api.binance.com/api/v3',
+  'https://api1.binance.com/api/v3',
+  'https://api2.binance.com/api/v3',
+  'https://api3.binance.com/api/v3',
+];
+let BINANCE = BINANCE_HOSTS[0]; // host atual (pode mudar se um falhar)
+let binanceBloqueada = false;    // vira true se TODOS os hosts derem 451
 
 // Cache da lista de moedas (atualiza 1x por dia)
 let listaMoedas = [];
@@ -157,8 +169,42 @@ function idDeSimbolo(base) {
 }
 
 // ============================================================
-// REQUISIÇÃO COM RETRY (mantida — útil para qualquer instabilidade)
+// REQUISIÇÃO BINANCE COM CASCATA DE HOSTS
+// Tenta o host atual; se der 451 (bloqueio regional), tenta os outros.
+// Se TODOS derem 451, marca binanceBloqueada=true e lança erro para
+// o chamador cair no CoinGecko.
 // ============================================================
+async function binanceGet(caminho, params = {}) {
+  // tenta o host atual primeiro, depois os demais
+  const ordem = [BINANCE, ...BINANCE_HOSTS.filter((h) => h !== BINANCE)];
+  let ultimoErro;
+  for (const host of ordem) {
+    try {
+      const r = await axios.get(`${host}${caminho}`, { params, timeout: 20000 });
+      if (host !== BINANCE) { BINANCE = host; console.log(`🔀 Binance: usando host ${host}`); }
+      binanceBloqueada = false;
+      return r;
+    } catch (e) {
+      ultimoErro = e;
+      const status = e.response?.status;
+      if (status === 451 || status === 403) continue; // bloqueio regional: tenta próximo host
+      if (status === 429 || status === 418 || status >= 500) {
+        await new Promise((r) => setTimeout(r, 1500));
+        continue;
+      }
+      // outro erro (ex: par inexistente) — não adianta trocar host
+      throw e;
+    }
+  }
+  // todos os hosts falharam
+  if (ultimoErro?.response?.status === 451 || ultimoErro?.response?.status === 403) {
+    binanceBloqueada = true;
+    console.log('⛔ Binance bloqueada nesta região (451). Usando CoinGecko como fonte principal.');
+  }
+  throw ultimoErro;
+}
+
+// Mantida para compatibilidade (instabilidade genérica)
 async function apiGet(url, params = {}, tentativas = 3) {
   for (let i = 0; i < tentativas; i++) {
     try {
@@ -166,9 +212,7 @@ async function apiGet(url, params = {}, tentativas = 3) {
     } catch (e) {
       const status = e.response?.status;
       if ((status === 429 || status === 418 || status >= 500) && i < tentativas - 1) {
-        const espera = 2000 * Math.pow(2, i);
-        console.log(`⏳ API instável (${status}). Aguardando ${espera/1000}s...`);
-        await new Promise((r) => setTimeout(r, espera));
+        await new Promise((r) => setTimeout(r, 2000 * Math.pow(2, i)));
         continue;
       }
       throw e;
@@ -181,17 +225,16 @@ const cacheHistorico = {};
 function chaveCache(id, dias) { return `${id}_${dias}`; }
 
 // ------------------------------------------------------------
-// Lista as moedas: pega os pares USDT da Binance com mais volume.
+// Lista as moedas. Tenta Binance; se bloqueada (451), usa CoinGecko.
 // ------------------------------------------------------------
 async function buscarListaMoedas() {
   const agora = Date.now();
   if (listaMoedas.length > 0 && agora - listaMoedasTimestamp < 86400000) {
     return listaMoedas;
   }
+  // tenta Binance primeiro
   try {
-    // 24h ticker de TODOS os pares — uma única chamada
-    const r = await apiGet(`${BINANCE}/ticker/24hr`);
-    // filtra só pares contra USDT, ignora alavancados (UP/DOWN/BULL/BEAR)
+    const r = await binanceGet(`/ticker/24hr`);
     const pares = r.data
       .filter((t) => t.symbol.endsWith('USDT'))
       .filter((t) => !/(UP|DOWN|BULL|BEAR)USDT$/.test(t.symbol))
@@ -241,8 +284,29 @@ async function buscarListaMoedas() {
       }
     }
     console.log(`✅ Lista de ${listaMoedas.length} moedas (Binance + ${Object.keys(fontes.MOEDAS_FORA_BINANCE).length} via CoinGecko)`);
+    return listaMoedas;
   } catch (e) {
-    console.error('Erro ao buscar lista de moedas:', e.message);
+    console.error('Binance indisponível para lista:', e.response?.status || e.message);
+    // FALLBACK: monta a lista pelo CoinGecko (sem bloqueio regional)
+    try {
+      console.log('🔄 Montando lista de moedas via CoinGecko (fallback)...');
+      const cgLista = await fontes.listarTopMoedas();
+      if (cgLista.length) {
+        listaMoedas = cgLista;
+        listaMoedasTimestamp = agora;
+        // garante que AERO e cia estão na lista
+        for (const [cgId, info] of Object.entries(fontes.MOEDAS_FORA_BINANCE)) {
+          if (!listaMoedas.find((m) => m.id === cgId)) {
+            listaMoedas.push({ id: cgId, nome: info.nome, simbolo: info.simbolo, imagem: '', rank: 999, foraBinance: true });
+          }
+        }
+        // popula mapaSimboloParaId para a busca funcionar
+        listaMoedas.forEach((m) => { mapaSimboloParaId[m.simbolo] = m.id; });
+        console.log(`✅ Lista de ${listaMoedas.length} moedas carregada via CoinGecko (fallback)`);
+      }
+    } catch (e2) {
+      console.error('CoinGecko também falhou para lista:', e2.response?.status || e2.message);
+    }
   }
   return listaMoedas;
 }
@@ -268,24 +332,27 @@ async function buscarPrecos(ids) {
   if (!ids.length) return {};
   await garantirMapa();
 
-  // separa moedas fora da Binance (ex: AERO) — preço vem do CoinGecko
+  // moedas fora da Binance (ex: AERO) sempre via CoinGecko
   const idsFora = ids.filter((id) => fontes.MOEDAS_FORA_BINANCE[id]);
-  const idsBinance = ids.filter((id) => !fontes.MOEDAS_FORA_BINANCE[id]);
+  // se a Binance está bloqueada nesta região, TUDO vai pelo CoinGecko
+  const idsBinance = binanceBloqueada ? [] : ids.filter((id) => !fontes.MOEDAS_FORA_BINANCE[id]);
+  const idsViaCG = binanceBloqueada ? ids.filter((id) => !fontes.MOEDAS_FORA_BINANCE[id]) : [];
 
   const resultado = {};
 
-  // 1) moedas fora da Binance: fallback CoinGecko (cacheado 1h)
-  for (const id of idsFora) {
+  // 1) moedas via CoinGecko (fora da Binance + todas, se bloqueada)
+  for (const id of [...idsFora, ...idsViaCG]) {
     try {
-      const fb = await fontes.precoFallback(id);
+      const cgId = fontes.MOEDAS_FORA_BINANCE[id]?.cgId || fontes.SIMBOLO_PARA_CG[(listaMoedas.find(m=>m.id===id)||{}).simbolo] || id;
+      const fb = await fontes.precoFallback(cgId);
       if (fb) resultado[id] = fb;
     } catch (e) { /* segue */ }
   }
 
-  // 2) moedas da Binance: ticker normal
+  // 2) moedas da Binance: ticker normal (com cascata de hosts)
   if (idsBinance.length) {
     try {
-      const r = await apiGet(`${BINANCE}/ticker/24hr`);
+      const r = await binanceGet(`/ticker/24hr`);
       const porSymbol = {};
       r.data.forEach((t) => { porSymbol[t.symbol] = t; });
       for (const id of idsBinance) {
@@ -300,7 +367,15 @@ async function buscarPrecos(ids) {
         };
       }
     } catch (e) {
-      console.error('Erro ao buscar preços (Binance):', e.message);
+      console.error('Erro ao buscar preços (Binance):', e.response?.status || e.message);
+      // Binance caiu agora: tenta CoinGecko para essas moedas
+      for (const id of idsBinance) {
+        try {
+          const cgId = fontes.SIMBOLO_PARA_CG[(listaMoedas.find(m=>m.id===id)||{}).simbolo] || id;
+          const fb = await fontes.precoFallback(cgId);
+          if (fb) resultado[id] = fb;
+        } catch (e2) { /* segue */ }
+      }
     }
   }
 
@@ -318,14 +393,21 @@ async function buscarHistorico(id, dias = 7) {
 
   await garantirMapa();
 
-  // Moedas fora da Binance (ex: AERO): histórico vem do CoinGecko
-  if (fontes.MOEDAS_FORA_BINANCE[id]) {
+  // Função interna: busca histórico no CoinGecko
+  async function viaCoinGecko() {
+    const cgId = fontes.MOEDAS_FORA_BINANCE[id]?.cgId
+      || fontes.SIMBOLO_PARA_CG[(listaMoedas.find(m=>m.id===id)||{}).simbolo]
+      || id;
+    const r = await axios.get(`https://api.coingecko.com/api/v3/coins/${cgId}/market_chart`, {
+      params: { vs_currency: 'usd', days: dias }, timeout: 20000,
+    });
+    return r.data.prices.map((p) => ({ t: p[0], preco: p[1] }));
+  }
+
+  // Moedas fora da Binance OU Binance bloqueada → CoinGecko direto
+  if (fontes.MOEDAS_FORA_BINANCE[id] || binanceBloqueada) {
     try {
-      const cgId = fontes.MOEDAS_FORA_BINANCE[id].cgId;
-      const r = await axios.get(`https://api.coingecko.com/api/v3/coins/${cgId}/market_chart`, {
-        params: { vs_currency: 'usd', days: dias }, timeout: 20000,
-      });
-      const dados = r.data.prices.map((p) => ({ t: p[0], preco: p[1] }));
+      const dados = await viaCoinGecko();
       cacheHistorico[chave] = { ts: Date.now(), dados };
       return dados;
     } catch (e) {
@@ -335,7 +417,7 @@ async function buscarHistorico(id, dias = 7) {
     }
   }
 
-  // Demais moedas: candles da Binance
+  // Demais moedas: candles da Binance (com cascata de hosts)
   try {
     const symbol = symbolDeId(id);
     let interval = '1d';
@@ -344,14 +426,21 @@ async function buscarHistorico(id, dias = 7) {
     else if (dias <= 7) { interval = '4h'; limit = dias * 6; }
     if (limit > 1000) limit = 1000;
 
-    const r = await apiGet(`${BINANCE}/klines`, { symbol, interval, limit });
+    const r = await binanceGet(`/klines`, { symbol, interval, limit });
     const dados = r.data.map((k) => ({ t: k[0], preco: parseFloat(k[4]) }));
     cacheHistorico[chave] = { ts: Date.now(), dados };
     return dados;
   } catch (e) {
-    console.error(`Erro histórico ${id}:`, e.message);
-    if (cache) return cache.dados;
-    return [];
+    console.error(`Erro histórico Binance ${id}:`, e.response?.status || e.message);
+    // tenta CoinGecko como último recurso
+    try {
+      const dados = await viaCoinGecko();
+      cacheHistorico[chave] = { ts: Date.now(), dados };
+      return dados;
+    } catch (e2) {
+      if (cache) return cache.dados;
+      return [];
+    }
   }
 }
 
@@ -361,20 +450,40 @@ async function buscarHistorico(id, dias = 7) {
 // ------------------------------------------------------------
 async function buscarPrecoNaData(id, dataISO) {
   await garantirMapa();
+  const d = new Date(dataISO);
+  if (isNaN(d.getTime()) || d > new Date()) return null; // data inválida/futura
+
+  // CoinGecko: histórico por data (formato dd-mm-yyyy)
+  async function viaCoinGecko() {
+    const cgId = fontes.MOEDAS_FORA_BINANCE[id]?.cgId
+      || fontes.SIMBOLO_PARA_CG[(listaMoedas.find(m=>m.id===id)||{}).simbolo]
+      || id;
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yyyy = d.getFullYear();
+    const r = await axios.get(`https://api.coingecko.com/api/v3/coins/${cgId}/history`, {
+      params: { date: `${dd}-${mm}-${yyyy}`, localization: false }, timeout: 20000,
+    });
+    return r.data?.market_data?.current_price?.usd ?? null;
+  }
+
+  // Moeda fora da Binance ou Binance bloqueada → CoinGecko
+  if (fontes.MOEDAS_FORA_BINANCE[id] || binanceBloqueada) {
+    try { return await viaCoinGecko(); }
+    catch (e) { console.error(`Erro preço-data CG ${id}:`, e.response?.status || e.message); return null; }
+  }
+
+  // Binance (cascata de hosts)
   try {
     const symbol = symbolDeId(id);
-    const d = new Date(dataISO);
-    if (isNaN(d.getTime()) || d > new Date()) return null; // data inválida/futura
-    const inicio = d.setHours(0, 0, 0, 0);
+    const inicio = new Date(d).setHours(0, 0, 0, 0);
     const fim = inicio + 24 * 60 * 60 * 1000;
-    const r = await apiGet(`${BINANCE}/klines`, {
-      symbol, interval: '1d', startTime: inicio, endTime: fim, limit: 1,
-    });
-    if (!r.data || !r.data.length) return null;
-    return parseFloat(r.data[0][4]); // fechamento do dia
-  } catch (e) {
-    console.error(`Erro preço na data ${id}:`, e.message);
+    const r = await binanceGet(`/klines`, { symbol, interval: '1d', startTime: inicio, endTime: fim, limit: 1 });
+    if (r.data && r.data.length) return parseFloat(r.data[0][4]);
     return null;
+  } catch (e) {
+    console.error(`Erro preço-data Binance ${id}:`, e.response?.status || e.message);
+    try { return await viaCoinGecko(); } catch (e2) { return null; }
   }
 }
 

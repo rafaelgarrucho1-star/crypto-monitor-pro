@@ -145,6 +145,30 @@ async function precoFallback(cgId) {
   return { usd: d.preco, usd_24h_change: d.variacao24h, usd_market_cap: d.marketCap, usd_24h_vol: 0 };
 }
 
+// ------------------------------------------------------------
+// Lista as top moedas direto do CoinGecko (usado quando a Binance
+// está bloqueada por região). Devolve no formato que o app espera.
+// ------------------------------------------------------------
+let cacheListaCG = { ts: 0, dados: [] };
+async function listarTopMoedas() {
+  // cache de 6h para não bater no limite
+  if (Date.now() - cacheListaCG.ts < 6 * 60 * 60 * 1000 && cacheListaCG.dados.length) {
+    return cacheListaCG.dados;
+  }
+  const r = await get(`${CG}/coins/markets`, {
+    vs_currency: 'usd', order: 'market_cap_desc', per_page: 250, page: 1, sparkline: false,
+  });
+  const lista = r.data.map((c, idx) => ({
+    id: c.id,
+    nome: c.name,
+    simbolo: (c.symbol || '').toUpperCase(),
+    imagem: c.image || '',
+    rank: c.market_cap_rank || idx + 1,
+  }));
+  cacheListaCG = { ts: Date.now(), dados: lista };
+  return lista;
+}
+
 module.exports = {
   MOEDAS_FORA_BINANCE,
   SIMBOLO_PARA_CG,
@@ -152,4 +176,5 @@ module.exports = {
   enriquecerMarketCap,
   enriquecerTVL,
   precoFallback,
+  listarTopMoedas,
 };
