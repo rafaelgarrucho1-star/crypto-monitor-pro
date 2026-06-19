@@ -117,6 +117,7 @@
 
 <div class="tabs">
   <div class="tab ativa" data-tab="dashboard">📊 Dashboard</div>
+  <div class="tab" data-tab="oportunidades">🚀 Oportunidades</div>
   <div class="tab" data-tab="grafico">📈 Gráficos & Fibonacci</div>
   <div class="tab" data-tab="carteira">💼 Minha Carteira</div>
   <div class="tab" data-tab="alertas">🔔 Histórico de Alertas</div>
@@ -137,6 +138,22 @@
       <div>
         <div id="moedasMonitoradas"><div class="panel"><div class="vazio">Nenhuma moeda monitorada ainda.<br>Escolha uma na lista ao lado para começar.</div></div></div>
       </div>
+    </div>
+  </div>
+
+  <!-- ABA OPORTUNIDADES -->
+  <div id="tab-oportunidades" class="esconde">
+    <div class="panel">
+      <h2>🚀 Oportunidades — melhores sinais de compra agora</h2>
+      <p style="font-size:13px;color:#9aa3b2;line-height:1.6;margin-bottom:14px">
+        Ranking das moedas com os indicadores <b>mais alinhados para alta neste momento</b>.
+        Mostra o preço atual, a ação sugerida e os <b>alvos técnicos reais</b> (resistência e suporte
+        onde o preço já reagiu antes). <b>Não é previsão de preço futuro</b> — é uma leitura do presente.
+        A decisão de comprar é sua.
+      </p>
+      <button class="btn btn-primary" onclick="carregarOportunidades()" id="btnOport">Atualizar ranking</button>
+      <div id="oportProgresso" style="margin-top:12px;font-size:13px;color:#d4c373"></div>
+      <div id="listaOportunidades" style="margin-top:14px"></div>
     </div>
   </div>
 
@@ -415,10 +432,15 @@ async function carregarMoedasDisp() {
 
 function renderDisp() {
   const busca = document.getElementById('busca').value.toLowerCase();
-  const filtradas = moedasDisp.filter(m =>
+  let filtradas = moedasDisp.filter(m =>
     !config.moedas.find(c => c.id === m.id) &&
     (m.nome.toLowerCase().includes(busca) || m.simbolo.toLowerCase().includes(busca))
-  ).slice(0, 100);
+  );
+  // com busca digitada, ordena A-Z (mais fácil achar); sem busca, mantém por relevância
+  if (busca.trim()) {
+    filtradas = filtradas.sort((a,b)=>(a.nome||'').localeCompare(b.nome||'','pt-BR'));
+  }
+  filtradas = filtradas.slice(0, 100);
   const el = document.getElementById('listaDisp');
   if (!filtradas.length) { el.innerHTML = '<div class="vazio">Nenhuma encontrada</div>'; return; }
   el.innerHTML = filtradas.map(m => `
@@ -478,6 +500,40 @@ async function renderMonitoradas() {
       </div>`;
 
     if (a) {
+      // ===== VEREDITO ÚNICO (decisão clara no topo) =====
+      const v = a.veredito || {};
+      const corVer = v.cor === 'compra' ? '#3ddc84' : (v.cor === 'venda' ? '#ff6b7a' : '#d4c373');
+      const iconeVer = v.acao === 'COMPRAR' ? '🟢' : (v.acao === 'VENDER' ? '🔴' : '🟡');
+      const taxaTxt = (a.taxaHistorica != null)
+        ? `Quando esta moeda deu sinais parecidos no passado, acertou a direção <b>${a.taxaHistorica.toFixed(0)}%</b> das vezes.`
+        : `Taxa histórica: rode o backtest na aba Gráficos para medir.`;
+      html += `
+      <div class="veredito" style="border:2px solid ${corVer};border-radius:12px;padding:14px;margin-bottom:14px;background:rgba(0,0,0,0.2)">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-size:22px;font-weight:800;color:${corVer}">${iconeVer} ${v.acao}</span>
+          <span style="color:#9aa3b2;font-size:13px">Score ${a.score}/100</span>
+        </div>
+        <div style="color:#cdd3dd;font-size:13px;margin-top:6px">${v.resumo}</div>
+        <div style="color:#9aa3b2;font-size:12px;margin-top:6px">${taxaTxt}</div>`;
+      // alvos técnicos reais
+      if (v.resistencia && v.suporte) {
+        html += `
+        <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap">
+          <div style="flex:1;min-width:120px;background:rgba(61,220,132,0.08);border-radius:8px;padding:8px">
+            <div style="font-size:11px;color:#9aa3b2">RESISTÊNCIA (alvo se subir)</div>
+            <div style="font-size:15px;font-weight:700;color:#3ddc84">$${v.resistencia.toLocaleString('en-US',{maximumFractionDigits:6})}</div>
+            <div style="font-size:12px;color:#3ddc84">+${v.distResistenciaPct.toFixed(1)}%</div>
+          </div>
+          <div style="flex:1;min-width:120px;background:rgba(255,107,122,0.08);border-radius:8px;padding:8px">
+            <div style="font-size:11px;color:#9aa3b2">SUPORTE (alvo se cair)</div>
+            <div style="font-size:15px;font-weight:700;color:#ff6b7a">$${v.suporte.toLocaleString('en-US',{maximumFractionDigits:6})}</div>
+            <div style="font-size:12px;color:#ff6b7a">${v.distSuportePct.toFixed(1)}%</div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:#6b7280;margin-top:8px">Resistência e suporte são níveis onde o preço já reagiu antes — alvos técnicos reais, não previsão. O preço pode rompê-los nos dois sentidos.</div>`;
+      }
+      html += `</div>`;
+
       html += `<div class="indicadores">
         <div class="ind"><div class="lbl">RSI</div><div class="val">${a.indicadores.rsi?.toFixed(1) ?? '-'}</div></div>
         <div class="ind"><div class="lbl">Tendência</div><div class="val" style="font-size:12px">${a.indicadores.tendencia}</div></div>
@@ -499,11 +555,41 @@ async function renderMonitoradas() {
       <div style="display:flex;justify-content:space-between;align-items:center">
         <span class="badge ${a.perfil.toLowerCase()}">${a.perfil} — Score ${a.score}/100</span>
       </div>
-      <div class="score-bar"><div class="score-fill" style="width:${a.score}%;background:${corScore}"></div></div>
-      <div class="sinais">
-        ${a.sinais.map(s => `<div class="sinal"><span class="tag ${s.vies}">${s.vies}</span><div><b>${s.nome}:</b> ${s.leitura}</div></div>`).join('')}
-      </div>
-      <div class="disclaimer">⚠️ <b>${a.recomendacao}</b></div>`;
+      <div class="score-bar"><div class="score-fill" style="width:${a.score}%;background:${corScore}"></div></div>`;
+
+      // ----- VEREDITO ÚNICO (decisão clara + alvos técnicos reais) -----
+      if (a.veredito) {
+        const v = a.veredito;
+        const corV = v.cor === 'compra' ? '#3ddc84' : (v.cor === 'venda' ? '#ff6b7a' : '#d4c373');
+        const taxaTxt = (a.taxaHistorica != null)
+          ? `Quando esta moeda deu sinais parecidos no passado, acertou a direção <b>${a.taxaHistorica.toFixed(0)}%</b> das vezes (${a.taxaSinais||0} sinais, 180 dias).`
+          : `Taxa histórica: toque em "Rodar backtest" na aba Gráficos para medir.`;
+        const fmtP = (x) => x != null ? ('$' + Number(x).toLocaleString('en-US',{maximumFractionDigits:6})) : '-';
+        html += `
+        <div class="veredito" style="border:1px solid ${corV}55;background:${corV}11;border-radius:10px;padding:14px;margin:10px 0">
+          <div style="font-size:20px;font-weight:800;color:${corV}">${v.acao}</div>
+          <div style="font-size:13px;color:#c7ccd6;margin:4px 0 10px">${v.resumo}</div>
+          <div style="font-size:12px;color:#9aa3b2;line-height:1.5">${taxaTxt}</div>
+          <div style="display:flex;gap:16px;margin-top:10px;flex-wrap:wrap">
+            <div style="font-size:12px"><span style="color:#9aa3b2">Resistência (alvo se subir):</span>
+              <b style="color:#3ddc84">${fmtP(v.resistencia)}</b>
+              <span style="color:#3ddc84">(${v.distResistenciaPct>=0?'+':''}${v.distResistenciaPct?.toFixed(1)}%)</span></div>
+            <div style="font-size:12px"><span style="color:#9aa3b2">Suporte (alvo se cair):</span>
+              <b style="color:#ff6b7a">${fmtP(v.suporte)}</b>
+              <span style="color:#ff6b7a">(${v.distSuportePct?.toFixed(1)}%)</span></div>
+          </div>
+        </div>`;
+      }
+
+      // sinais detalhados — agora recolhíveis (o "porquê" da decisão)
+      html += `
+      <details style="margin-top:6px">
+        <summary style="cursor:pointer;color:#7c9eff;font-size:13px">Ver os indicadores que levaram a essa decisão</summary>
+        <div class="sinais" style="margin-top:8px">
+          ${a.sinais.map(s => `<div class="sinal"><span class="tag ${s.vies}">${s.vies}</span><div><b>${s.nome}:</b> ${s.leitura}</div></div>`).join('')}
+        </div>
+      </details>
+      <div class="disclaimer">⚠️ Sinais são baseados em padrões passados e <b>não garantem o futuro</b>. A decisão de comprar ou vender é sua.</div>`;
     }
 
     // configuração de alertas
@@ -731,8 +817,9 @@ async function carregarAlertas(){
 // ---------- CARTEIRA ----------
 function popularSelectCarteira(){
   const sel = document.getElementById('cartMoeda');
-  // permite escolher entre todas as moedas disponíveis, não só as monitoradas
-  const fonte = moedasDisp.length ? moedasDisp.slice(0, 250) : config.moedas;
+  // todas as moedas disponíveis, ordenadas por NOME (A-Z) para facilitar achar
+  const fonte = (moedasDisp.length ? [...moedasDisp] : [...config.moedas])
+    .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
   sel.innerHTML = '<option value="">Selecione...</option>' +
     fonte.map(m=>`<option value="${m.id}" data-nome="${m.nome}" data-simbolo="${m.simbolo}" data-img="${m.imagem||''}">${m.nome} (${m.simbolo})</option>`).join('');
 }
@@ -917,6 +1004,41 @@ async function conectarMetamask(){
     res.textContent = 'Conexão cancelada ou erro: ' + (e.message||'');
     res.style.color = '#ff6b7a';
   }
+}
+
+// ---------- OPORTUNIDADES (ranking) ----------
+async function carregarOportunidades(){
+  const btn = document.getElementById('btnOport');
+  const prog = document.getElementById('oportProgresso');
+  const lista = document.getElementById('listaOportunidades');
+  btn.disabled = true; btn.textContent = '⏳ Analisando...';
+  prog.textContent = 'Rodando análise nas moedas (pode levar até 1 minuto)...';
+  try {
+    const r = await (await fetch(API+'/api/oportunidades')).json();
+    if (r.erro) { prog.textContent = '⚠️ ' + r.erro; lista.innerHTML=''; }
+    else {
+      prog.textContent = r.cacheado ? 'Resultado recente (atualiza a cada 30 min).' : '✅ Ranking atualizado.';
+      const fmtP = (x) => x!=null ? ('$'+Number(x).toLocaleString('en-US',{maximumFractionDigits:6})) : '-';
+      if (!r.oportunidades.length) { lista.innerHTML = '<div class="vazio">Nenhuma oportunidade clara no momento.</div>'; }
+      else {
+        lista.innerHTML = r.oportunidades.map((o,i)=>{
+          const corA = o.acao==='COMPRAR'?'#3ddc84':(o.acao==='VENDER'?'#ff6b7a':'#d4c373');
+          return `<div style="background:#161a23;border:1px solid #262b38;border-radius:10px;padding:14px;margin-bottom:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+              <div><b style="font-size:15px">#${i+1} ${o.nome}</b> <span style="color:#6b7280">${o.simbolo}</span></div>
+              <span class="badge" style="background:${corA}22;color:${corA}">${o.acao} · Score ${o.score}/100</span>
+            </div>
+            <div style="display:flex;gap:18px;margin-top:8px;flex-wrap:wrap;font-size:12px">
+              <div><span style="color:#9aa3b2">Preço:</span> <b>${fmtP(o.preco)}</b></div>
+              <div><span style="color:#9aa3b2">Resistência:</span> <b style="color:#3ddc84">${fmtP(o.resistencia)}</b> <span style="color:#3ddc84">(${o.distResistenciaPct>=0?'+':''}${o.distResistenciaPct?.toFixed(1)}%)</span></div>
+              <div><span style="color:#9aa3b2">Suporte:</span> <b style="color:#ff6b7a">${fmtP(o.suporte)}</b> <span style="color:#ff6b7a">(${o.distSuportePct?.toFixed(1)}%)</span></div>
+            </div>
+          </div>`;
+        }).join('');
+      }
+    }
+  } catch(e){ prog.textContent = 'Erro: ' + e.message; }
+  btn.disabled = false; btn.textContent = 'Atualizar ranking';
 }
 
 // ---------- IA / BACKTEST / APRENDIZADO ----------

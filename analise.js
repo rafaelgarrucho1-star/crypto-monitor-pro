@@ -277,11 +277,41 @@ function scoreConsolidado(precos) {
     recomendacao = 'Sem alinhamento forte dos indicadores. O sistema PROPOSITALMENTE não dá sinal aqui — sinais fracos reduzem a taxa de acerto. Aguarde uma configuração mais clara.';
   }
 
+  // ----- VEREDITO ÚNICO: traduz tudo numa decisão clara -----
+  const niveis = niveisTecnicos(precos);
+  let acao, acaoCor, acaoResumo;
+  if (perfil === 'COMPRA') {
+    acao = 'COMPRAR';
+    acaoCor = 'compra';
+    acaoResumo = 'Indicadores alinhados para alta.';
+  } else if (perfil === 'VENDA') {
+    acao = 'VENDER';
+    acaoCor = 'venda';
+    acaoResumo = 'Indicadores alinhados para baixa.';
+  } else {
+    acao = 'ESPERAR';
+    acaoCor = 'neutro';
+    acaoResumo = 'Sinais sem alinhamento forte. Melhor aguardar uma configuração mais clara.';
+  }
+
+  const veredito = {
+    acao,            // COMPRAR / VENDER / ESPERAR
+    cor: acaoCor,
+    resumo: acaoResumo,
+    score: pontos,
+    // alvos técnicos REAIS (onde o preço já reagiu antes)
+    resistencia: niveis.resistencia,
+    suporte: niveis.suporte,
+    distResistenciaPct: niveis.distResistenciaPct,
+    distSuportePct: niveis.distSuportePct,
+  };
+
   return {
     score: pontos,
     perfil,
     recomendacao,
     sinais,
+    veredito,
     indicadores: {
       rsi: valorRsi,
       macd: valorMacd,
@@ -289,12 +319,47 @@ function scoreConsolidado(precos) {
       tendencia: tend,
       fibonacci: fib,
       volatilidade: volatilidade(precos),
+      niveis,
     },
   };
 }
 
 // ============================================================
-// BACKTEST — "olhar para trás" para medir aderência da fórmula
+// NÍVEIS TÉCNICOS REAIS — suporte e resistência por "pivôs"
+// Um pivô de alta (resistência) é um ponto onde o preço subiu e
+// depois caiu (topo local). Um pivô de baixa (suporte) é o contrário.
+// São níveis ONDE O PREÇO JÁ REAGIU — não chutes. Servem como alvos.
+// ============================================================
+function niveisTecnicos(precos, janela = 3) {
+  if (precos.length < janela * 2 + 1) return { suporte: null, resistencia: null };
+  const atual = precos[precos.length - 1];
+  const topos = [];
+  const fundos = [];
+
+  for (let i = janela; i < precos.length - janela; i++) {
+    const fatia = precos.slice(i - janela, i + janela + 1);
+    const centro = precos[i];
+    if (centro === Math.max(...fatia)) topos.push(centro);     // topo local = resistência
+    if (centro === Math.min(...fatia)) fundos.push(centro);    // fundo local = suporte
+  }
+
+  // resistência = topo local mais próximo ACIMA do preço atual
+  const resistAcima = topos.filter((t) => t > atual).sort((a, b) => a - b);
+  // suporte = fundo local mais próximo ABAIXO do preço atual
+  const supAbaixo = fundos.filter((f) => f < atual).sort((a, b) => b - a);
+
+  const resistencia = resistAcima[0] ?? Math.max(...precos);
+  const suporte = supAbaixo[0] ?? Math.min(...precos);
+
+  return {
+    suporte,
+    resistencia,
+    distSuportePct: ((suporte - atual) / atual) * 100,   // negativo (abaixo)
+    distResistenciaPct: ((resistencia - atual) / atual) * 100, // positivo (acima)
+  };
+}
+
+
 // Pega o histórico, recua até cada ponto do passado, gera o score
 // COM OS DADOS QUE EXISTIAM NAQUELE MOMENTO (sem espiar o futuro),
 // e confere se o preço N dias depois confirmou o sinal.
@@ -395,5 +460,5 @@ function gerarVeredictoBacktest(taxaAcerto, retornoMedio, totalSinais) {
 }
 
 module.exports = {
-  sma, ema, rsi, macd, bollinger, fibonacci, tendencia, volatilidade, scoreConsolidado, backtest,
+  sma, ema, rsi, macd, bollinger, fibonacci, tendencia, volatilidade, scoreConsolidado, backtest, niveisTecnicos,
 };

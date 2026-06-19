@@ -222,6 +222,7 @@ async function apiGet(url, params = {}, tentativas = 3) {
 
 // Cache simples de histórico (10 min)
 const cacheHistorico = {};
+const cacheTaxaHist = {}; // { id: { taxa, sinais, ts } } — backtest 180d cacheado 6h
 function chaveCache(id, dias) { return `${id}_${dias}`; }
 
 // ------------------------------------------------------------
@@ -398,10 +399,14 @@ async function buscarHistorico(id, dias = 7) {
     const cgId = fontes.MOEDAS_FORA_BINANCE[id]?.cgId
       || fontes.SIMBOLO_PARA_CG[(listaMoedas.find(m=>m.id===id)||{}).simbolo]
       || id;
+    const params = { vs_currency: 'usd', days: dias };
+    // para períodos > 1 dia, pede granularidade diária (mais estável p/ tokens menores)
+    if (dias > 1) params.interval = 'daily';
     const r = await axios.get(`https://api.coingecko.com/api/v3/coins/${cgId}/market_chart`, {
-      params: { vs_currency: 'usd', days: dias }, timeout: 20000,
+      params, timeout: 20000,
     });
-    return r.data.prices.map((p) => ({ t: p[0], preco: p[1] }));
+    const dados = (r.data?.prices || []).map((p) => ({ t: p[0], preco: p[1] }));
+    return dados;
   }
 
   // Moedas fora da Binance OU Binance bloqueada → CoinGecko direto
@@ -576,7 +581,26 @@ async function cicloMonitoramento() {
       if (hist.length >= 50) {
         const precosArr = hist.map((h) => h.preco);
         const resultado = analise.scoreConsolidado(precosArr);
-        analiseCache[moeda.id] = { ...resultado, timestamp: Date.now() };
+
+        // TAXA HISTÓRICA: backtest 180d, cacheado 6h por moeda (é pesado)
+        let taxaHistorica = cacheTaxaHist[moeda.id]?.taxa ?? null;
+        let taxaSinais = cacheTaxaHist[moeda.id]?.sinais ?? 0;
+        const precisaBacktest = !cacheTaxaHist[moeda.id] || (Date.now() - cacheTaxaHist[moeda.id].ts > 6*3600000);
+        if (precisaBacktest) {
+          try {
+            const hist180 = await buscarHistorico(moeda.id, 180);
+            if (hist180.length >= 60) {
+              const bt = analise.backtest(hist180.map(h => h.preco), 7);
+              if (!bt.erro && bt.taxaAcerto != null) {
+                taxaHistorica = bt.taxaAcerto;
+                taxaSinais = bt.totalSinais;
+                cacheTaxaHist[moeda.id] = { taxa: taxaHistorica, sinais: taxaSinais, ts: Date.now() };
+              }
+            }
+          } catch (e) { /* mantém o que tinha */ }
+        }
+
+        analiseCache[moeda.id] = { ...resultado, taxaHistorica, taxaSinais, timestamp: Date.now() };
 
         // APRENDIZADO: registra sinais claros (compra/venda) para
         // conferir o resultado real daqui a 7 dias. Evita duplicar:
@@ -1242,6 +1266,60 @@ app.get('/api/aprendizado', (req, res) => {
     totalSinaisRegistrados: (estadoAprendizado.sinais || []).length,
     historicoTaxa: estadoAprendizado.historicoTaxa || [],
   });
+});
+
+// ============================================================
+// RANKING DE OPORTUNIDADES — as melhores configurações de COMPRA agora.
+// Honesto: ranqueia pelo score atual + mostra a taxa histórica real e
+// os alvos técnicos. NÃO promete preço futuro.
+// Usa as moedas monitoradas + top da lista (limitado p/ não estourar API).
+// ============================================================
+let cacheOportunidades = { ts: 0, dados: [] };
+app.get('/api/oportunidades', async (req, res) => {
+  // cache de 30 min (é uma operação pesada)
+  if (Date.now() - cacheOportunidades.ts < 30*60000 && cacheOportunidades.dados.length) {
+    return res.json({ oportunidades: cacheOportunidades.dados, cacheado: true });
+  }
+  try {
+    const lista = await buscarListaMoedas();
+    // analisa as 30 com mais volume + as monitoradas (evita estourar a API)
+    const idsAlvo = [...new Set([
+      ...config.moedas.map(m => m.id),
+      ...lista.slice(0, 30).map(m => m.id),
+    ])];
+
+    const resultados = [];
+    for (const id of idsAlvo) {
+      try {
+        const hist = await buscarHistorico(id, 90);
+        if (hist.length < 50) continue;
+        const precosArr = hist.map(h => h.preco);
+        const r = analise.scoreConsolidado(precosArr);
+        const info = lista.find(m => m.id === id) || {};
+        resultados.push({
+          id,
+          nome: info.nome || id,
+          simbolo: info.simbolo || '',
+          preco: precosArr[precosArr.length - 1],
+          score: r.score,
+          acao: r.veredito?.acao || r.perfil,
+          resistencia: r.veredito?.resistencia,
+          distResistenciaPct: r.veredito?.distResistenciaPct,
+          suporte: r.veredito?.suporte,
+          distSuportePct: r.veredito?.distSuportePct,
+        });
+      } catch (e) { /* pula moeda que falhou */ }
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    // ranqueia pelo score (maior = sinal de compra mais forte)
+    resultados.sort((a, b) => b.score - a.score);
+    const top = resultados.slice(0, 10);
+    cacheOportunidades = { ts: Date.now(), dados: top };
+    res.json({ oportunidades: top, cacheado: false });
+  } catch (e) {
+    res.json({ erro: 'Não foi possível montar o ranking agora: ' + e.message });
+  }
 });
 
 app.get('/api/status', (req, res) => {
