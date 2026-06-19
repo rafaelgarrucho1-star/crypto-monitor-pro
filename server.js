@@ -226,6 +226,23 @@ const cacheTaxaHist = {}; // { id: { taxa, sinais, ts } } — backtest 180d cach
 function chaveCache(id, dias) { return `${id}_${dias}`; }
 
 // ------------------------------------------------------------
+// FILA GLOBAL DO COINGECKO: serializa as chamadas para nunca
+// disparar duas ao mesmo tempo (principal causa do 429). Cada
+// chamada espera a anterior + um intervalo mínimo de 2,5s.
+// ------------------------------------------------------------
+let filaCG = Promise.resolve();
+let ultimaChamadaCG = 0;
+function naFilaCoinGecko(fn) {
+  filaCG = filaCG.then(async () => {
+    const desde = Date.now() - ultimaChamadaCG;
+    if (desde < 2500) await new Promise((r) => setTimeout(r, 2500 - desde));
+    ultimaChamadaCG = Date.now();
+    return fn();
+  }).catch(() => {}); // não deixa um erro travar a fila
+  return filaCG;
+}
+
+// ------------------------------------------------------------
 // Lista as moedas. Tenta Binance; se bloqueada (451), usa CoinGecko.
 // ------------------------------------------------------------
 async function buscarListaMoedas() {
@@ -390,33 +407,49 @@ async function buscarPrecos(ids) {
 async function buscarHistorico(id, dias = 7) {
   const chave = chaveCache(id, dias);
   const cache = cacheHistorico[chave];
-  if (cache && Date.now() - cache.ts < 600000) return cache.dados;
+  const ehCoinGecko = fontes.MOEDAS_FORA_BINANCE[id] || binanceBloqueada;
+  // CoinGecko tem limite baixo: cache de 30 min. Binance: 10 min.
+  const validade = ehCoinGecko ? 30 * 60000 : 10 * 60000;
+  if (cache && Date.now() - cache.ts < validade) return cache.dados;
 
   await garantirMapa();
 
-  // Função interna: busca histórico no CoinGecko
+  // Função interna: busca histórico no CoinGecko COM RETRY no 429
   async function viaCoinGecko() {
     const cgId = fontes.MOEDAS_FORA_BINANCE[id]?.cgId
       || fontes.SIMBOLO_PARA_CG[(listaMoedas.find(m=>m.id===id)||{}).simbolo]
       || id;
     const params = { vs_currency: 'usd', days: dias };
-    // para períodos > 1 dia, pede granularidade diária (mais estável p/ tokens menores)
     if (dias > 1) params.interval = 'daily';
-    const r = await axios.get(`https://api.coingecko.com/api/v3/coins/${cgId}/market_chart`, {
-      params, timeout: 20000,
-    });
-    const dados = (r.data?.prices || []).map((p) => ({ t: p[0], preco: p[1] }));
-    return dados;
+    // tenta até 4 vezes, esperando mais a cada 429
+    for (let i = 0; i < 4; i++) {
+      try {
+        const r = await axios.get(`https://api.coingecko.com/api/v3/coins/${cgId}/market_chart`, {
+          params, timeout: 20000,
+        });
+        return (r.data?.prices || []).map((p) => ({ t: p[0], preco: p[1] }));
+      } catch (e) {
+        const status = e.response?.status;
+        if (status === 429 && i < 3) {
+          const espera = 5000 * (i + 1); // 5s, 10s, 15s
+          console.log(`⏳ CoinGecko 429 (${id}). Aguardando ${espera/1000}s...`);
+          await new Promise((r) => setTimeout(r, espera));
+          continue;
+        }
+        throw e;
+      }
+    }
   }
 
   // Moedas fora da Binance OU Binance bloqueada → CoinGecko direto
-  if (fontes.MOEDAS_FORA_BINANCE[id] || binanceBloqueada) {
+  if (ehCoinGecko) {
     try {
-      const dados = await viaCoinGecko();
+      const dados = await naFilaCoinGecko(viaCoinGecko);
       cacheHistorico[chave] = { ts: Date.now(), dados };
       return dados;
     } catch (e) {
       console.error(`Erro histórico CoinGecko ${id}:`, e.response?.status || e.message);
+      // usa cache vencido como último recurso (melhor que gráfico vazio)
       if (cache) return cache.dados;
       return [];
     }
