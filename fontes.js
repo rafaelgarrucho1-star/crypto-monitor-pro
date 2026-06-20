@@ -17,6 +17,7 @@ const axios = require('axios');
 
 const CG = 'https://api.coingecko.com/api/v3';
 const LLAMA = 'https://api.llama.fi';
+const LLAMA_COINS = 'https://coins.llama.fi'; // API de PREÇOS (rápida, sem rate-limit agressivo)
 
 // ------------------------------------------------------------
 // Moedas que NÃO existem na Binance e precisam vir do CoinGecko.
@@ -169,6 +170,48 @@ async function listarTopMoedas() {
   return lista;
 }
 
+// ============================================================
+// PREÇOS via DefiLlama (coins.llama.fi) — fonte RÁPIDA e estável
+// para moedas que a Binance não lista (ex: AERO). Não tem o
+// rate-limit agressivo do CoinGecko. Usa o id do CoinGecko com
+// prefixo "coingecko:". Resolve gráfico vazio + preço-na-data.
+// ============================================================
+
+// Histórico de preços. Devolve [{ t (ms), preco }]. Vazio se falhar.
+async function historicoLlama(cgId, dias = 7) {
+  const chave = `coingecko:${cgId}`;
+  // define granularidade conforme o período
+  let period = '1d', span = dias;
+  if (dias <= 1) { period = '1h'; span = 24; }
+  else if (dias <= 7) { period = '4h'; span = dias * 6; }
+  if (span > 1000) span = 1000;
+
+  const start = Math.floor(Date.now() / 1000) - dias * 86400;
+  const r = await get(`${LLAMA_COINS}/chart/${chave}`, {
+    start, span, period, searchWidth: 600,
+  });
+  const bloco = r.data?.coins?.[chave];
+  if (!bloco || !Array.isArray(bloco.prices)) return [];
+  return bloco.prices.map((p) => ({ t: p.timestamp * 1000, preco: p.price }));
+}
+
+// Preço numa data específica (timestamp em ms). Devolve número ou null.
+async function precoNaDataLlama(cgId, timestampMs) {
+  const chave = `coingecko:${cgId}`;
+  const ts = Math.floor(timestampMs / 1000);
+  const r = await get(`${LLAMA_COINS}/prices/historical/${ts}/${chave}`, { searchWidth: '6h' });
+  const bloco = r.data?.coins?.[chave];
+  return bloco?.price ?? null;
+}
+
+// Preço atual. Devolve número ou null.
+async function precoAtualLlama(cgId) {
+  const chave = `coingecko:${cgId}`;
+  const r = await get(`${LLAMA_COINS}/prices/current/${chave}`);
+  const bloco = r.data?.coins?.[chave];
+  return bloco?.price ?? null;
+}
+
 module.exports = {
   MOEDAS_FORA_BINANCE,
   SIMBOLO_PARA_CG,
@@ -177,4 +220,7 @@ module.exports = {
   enriquecerTVL,
   precoFallback,
   listarTopMoedas,
+  historicoLlama,
+  precoNaDataLlama,
+  precoAtualLlama,
 };

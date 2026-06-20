@@ -287,6 +287,12 @@ async function buscarListaMoedas() {
     listaMoedasTimestamp = agora;
 
     // Acrescenta moedas que a Binance não lista (ex: AERO), vindas do CoinGecko.
+    const cgIdsFora = Object.keys(fontes.MOEDAS_FORA_BINANCE);
+    let ranksFora = {};
+    try {
+      const enr = await fontes.enriquecerMarketCap(cgIdsFora); // cacheado 1h
+      cgIdsFora.forEach((cg) => { if (enr[cg]?.rank) ranksFora[cg] = enr[cg].rank; });
+    } catch (e) { /* sem rank real, usa fallback */ }
     for (const [cgId, info] of Object.entries(fontes.MOEDAS_FORA_BINANCE)) {
       const id = cgId; // usa o próprio cgId como id interno
       if (!listaMoedas.find((m) => m.id === id)) {
@@ -295,7 +301,7 @@ async function buscarListaMoedas() {
           nome: info.nome,
           simbolo: info.simbolo,
           imagem: '',
-          rank: 999,
+          rank: ranksFora[cgId] || 999, // rank real do CoinGecko quando disponível
           foraBinance: true, // marca para o buscarPrecos saber usar fallback
         });
         mapaSimboloParaId[info.simbolo] = id;
@@ -441,8 +447,26 @@ async function buscarHistorico(id, dias = 7) {
     }
   }
 
-  // Moedas fora da Binance OU Binance bloqueada → CoinGecko direto
+  // Moedas fora da Binance OU Binance bloqueada → DefiLlama primeiro, CoinGecko depois
   if (ehCoinGecko) {
+    const cgId = fontes.MOEDAS_FORA_BINANCE[id]?.cgId
+      || fontes.SIMBOLO_PARA_CG[(listaMoedas.find(m=>m.id===id)||{}).simbolo]
+      || id;
+
+    // 1ª tentativa: DefiLlama (rápida, sem rate-limit) — só p/ moedas fora da Binance
+    if (fontes.MOEDAS_FORA_BINANCE[id]) {
+      try {
+        const dados = await fontes.historicoLlama(cgId, dias);
+        if (dados.length >= 2) {
+          cacheHistorico[chave] = { ts: Date.now(), dados };
+          return dados;
+        }
+      } catch (e) {
+        console.log(`DefiLlama histórico falhou p/ ${id}, tentando CoinGecko:`, e.response?.status || e.message);
+      }
+    }
+
+    // 2ª tentativa: CoinGecko (na fila, com retry)
     try {
       const dados = await naFilaCoinGecko(viaCoinGecko);
       cacheHistorico[chave] = { ts: Date.now(), dados };
@@ -505,9 +529,21 @@ async function buscarPrecoNaData(id, dataISO) {
     return r.data?.market_data?.current_price?.usd ?? null;
   }
 
-  // Moeda fora da Binance ou Binance bloqueada → CoinGecko
+  // Moeda fora da Binance ou Binance bloqueada → DefiLlama primeiro, CoinGecko depois
   if (fontes.MOEDAS_FORA_BINANCE[id] || binanceBloqueada) {
-    try { return await viaCoinGecko(); }
+    const cgId = fontes.MOEDAS_FORA_BINANCE[id]?.cgId
+      || fontes.SIMBOLO_PARA_CG[(listaMoedas.find(m=>m.id===id)||{}).simbolo]
+      || id;
+    // DefiLlama (rápido, sem rate-limit) — só p/ moedas fora da Binance
+    if (fontes.MOEDAS_FORA_BINANCE[id]) {
+      try {
+        const p = await fontes.precoNaDataLlama(cgId, d.getTime());
+        if (p != null) return p;
+      } catch (e) {
+        console.log(`DefiLlama preço-data falhou p/ ${id}, tentando CoinGecko:`, e.response?.status || e.message);
+      }
+    }
+    try { return await naFilaCoinGecko(viaCoinGecko); }
     catch (e) { console.error(`Erro preço-data CG ${id}:`, e.response?.status || e.message); return null; }
   }
 
@@ -813,6 +849,10 @@ app.get('/api/historico-grafico/:id', async (req, res) => {
   let analiseResult = null;
   if (hist.length >= 50) {
     analiseResult = analise.scoreConsolidado(hist.map((h) => h.preco));
+    // anexa o nome da moeda (útil pro título da análise no front)
+    const lista = await buscarListaMoedas();
+    const info = lista.find((m) => m.id === req.params.id);
+    if (info) analiseResult.nome = info.nome;
   }
   res.json({ historico: hist, analise: analiseResult });
 });
@@ -1302,54 +1342,117 @@ app.get('/api/aprendizado', (req, res) => {
 });
 
 // ============================================================
-// RANKING DE OPORTUNIDADES — as melhores configurações de COMPRA agora.
-// Honesto: ranqueia pelo score atual + mostra a taxa histórica real e
-// os alvos técnicos. NÃO promete preço futuro.
-// Usa as moedas monitoradas + top da lista (limitado p/ não estourar API).
+// RANKING DE OPORTUNIDADES (honesto)
+// Regras pedidas:
+//  - NÃO mostra stablecoins (não valorizam).
+//  - Mostra o UPSIDE: % até a resistência (alvo técnico de alta).
+//  - Compara cada moeda com BTC e ETH (força relativa) e só lista
+//    as que estão performando ACIMA dos dois no período.
+//  - Só sinais de compra, top 10, ranqueado por score + upside.
+//  - Horizonte: leitura do presente baseada nos últimos 90 dias;
+//    a taxa histórica usa janela de 7 dias à frente. Atualiza a cada 30 min.
 // ============================================================
-let cacheOportunidades = { ts: 0, dados: [] };
+const STABLECOINS = new Set([
+  'USDT','USDC','DAI','USD1','RLUSD','TUSD','FDUSD','USDD','USDE','PYUSD',
+  'BUSD','GUSD','USDP','FRAX','LUSD','USDS','EURT','EURC','USDB','CRVUSD','SUSD','USDX',
+]);
+// detecta stablecoin pelo símbolo OU pelo comportamento (preço colado em ~$1 e quase sem oscilar)
+function ehStablecoin(simbolo, precos) {
+  if (STABLECOINS.has((simbolo || '').toUpperCase())) return true;
+  if (!precos || precos.length < 5) return false;
+  const ult = precos[precos.length - 1];
+  const max = Math.max(...precos), min = Math.min(...precos);
+  const oscilacao = (max - min) / ult; // amplitude relativa
+  return ult > 0.5 && ult < 2 && oscilacao < 0.03; // perto de $1 e oscilou <3% em 90d
+}
+// retorno % nos últimos N dias (array diário)
+function retornoNDias(precos, n) {
+  if (precos.length <= n) return null;
+  const ini = precos[precos.length - 1 - n], fim = precos[precos.length - 1];
+  if (!ini) return null;
+  return ((fim - ini) / ini) * 100;
+}
+
+let cacheOportunidades = { ts: 0, payload: null };
 app.get('/api/oportunidades', async (req, res) => {
-  // cache de 30 min (é uma operação pesada)
-  if (Date.now() - cacheOportunidades.ts < 30*60000 && cacheOportunidades.dados.length) {
-    return res.json({ oportunidades: cacheOportunidades.dados, cacheado: true });
+  if (Date.now() - cacheOportunidades.ts < 30 * 60000 && cacheOportunidades.payload) {
+    return res.json({ ...cacheOportunidades.payload, cacheado: true });
   }
   try {
     const lista = await buscarListaMoedas();
-    // analisa as 30 com mais volume + as monitoradas (evita estourar a API)
+
+    // ---- Benchmark BTC e ETH (força relativa) ----
+    const idBTC = mapaSimboloParaId['BTC'] || 'bitcoin';
+    const idETH = mapaSimboloParaId['ETH'] || 'ethereum';
+    async function retornosDe(id) {
+      try {
+        const h = await buscarHistorico(id, 90);
+        const p = h.map((x) => x.preco);
+        return { r7: retornoNDias(p, 7), r30: retornoNDias(p, 30) };
+      } catch { return { r7: null, r30: null }; }
+    }
+    const btc = await retornosDe(idBTC);
+    const eth = await retornosDe(idETH);
+    // referência a bater: o MAIOR entre BTC e ETH em cada janela (mais exigente)
+    const refBaixa7 = Math.max(btc.r7 ?? -999, eth.r7 ?? -999);
+    const refBaixa30 = Math.max(btc.r30 ?? -999, eth.r30 ?? -999);
+
+    // ---- Candidatas: top 40 por volume + monitoradas ----
     const idsAlvo = [...new Set([
-      ...config.moedas.map(m => m.id),
-      ...lista.slice(0, 30).map(m => m.id),
+      ...config.moedas.map((m) => m.id),
+      ...lista.slice(0, 40).map((m) => m.id),
     ])];
 
-    const resultados = [];
+    const candidatas = [];
     for (const id of idsAlvo) {
       try {
+        const info = lista.find((m) => m.id === id) || {};
         const hist = await buscarHistorico(id, 90);
         if (hist.length < 50) continue;
-        const precosArr = hist.map(h => h.preco);
+        const precosArr = hist.map((h) => h.preco);
+
+        // pula stablecoins
+        if (ehStablecoin(info.simbolo, precosArr)) continue;
+
         const r = analise.scoreConsolidado(precosArr);
-        const info = lista.find(m => m.id === id) || {};
-        resultados.push({
-          id,
-          nome: info.nome || id,
-          simbolo: info.simbolo || '',
+        const v = r.veredito || {};
+        const r7 = retornoNDias(precosArr, 7);
+        const r30 = retornoNDias(precosArr, 30);
+
+        // FILTROS: precisa ser sinal de compra, ter upside real,
+        // e estar batendo BTC e ETH (força relativa) no período de 7 dias.
+        const ehCompra = v.acao === 'COMPRAR' || r.score >= 60;
+        const temUpside = (v.distResistenciaPct ?? -1) > 0.5;
+        const batemMercado = (r7 ?? -999) > refBaixa7;
+        if (!ehCompra || !temUpside || !batemMercado) continue;
+
+        candidatas.push({
+          id, nome: info.nome || id, simbolo: info.simbolo || '',
           preco: precosArr[precosArr.length - 1],
           score: r.score,
-          acao: r.veredito?.acao || r.perfil,
-          resistencia: r.veredito?.resistencia,
-          distResistenciaPct: r.veredito?.distResistenciaPct,
-          suporte: r.veredito?.suporte,
-          distSuportePct: r.veredito?.distSuportePct,
+          acao: v.acao || r.perfil,
+          upsidePct: v.distResistenciaPct,     // % até a resistência (potencial de alta)
+          resistencia: v.resistencia,
+          downsidePct: v.distSuportePct,        // % até o suporte (risco de baixa)
+          suporte: v.suporte,
+          retorno7d: r7,
+          retorno30d: r30,
         });
       } catch (e) { /* pula moeda que falhou */ }
-      await new Promise(r => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 150));
     }
 
-    // ranqueia pelo score (maior = sinal de compra mais forte)
-    resultados.sort((a, b) => b.score - a.score);
-    const top = resultados.slice(0, 10);
-    cacheOportunidades = { ts: Date.now(), dados: top };
-    res.json({ oportunidades: top, cacheado: false });
+    // ranqueia por score, desempate pelo maior upside
+    candidatas.sort((a, b) => (b.score - a.score) || ((b.upsidePct||0) - (a.upsidePct||0)));
+    const top = candidatas.slice(0, 10);
+
+    const payload = {
+      oportunidades: top,
+      benchmark: { btc7: btc.r7, btc30: btc.r30, eth7: eth.r7, eth30: eth.r30 },
+      horizonteTexto: 'Leitura dos últimos 90 dias. A taxa histórica testa 7 dias à frente. Atualiza a cada 30 min.',
+    };
+    cacheOportunidades = { ts: Date.now(), payload };
+    res.json({ ...payload, cacheado: false });
   } catch (e) {
     res.json({ erro: 'Não foi possível montar o ranking agora: ' + e.message });
   }

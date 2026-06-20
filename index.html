@@ -132,7 +132,7 @@
     <div class="grid">
       <div class="panel">
         <h2>➕ Adicionar Moeda</h2>
-        <input type="text" id="busca" placeholder="Buscar entre as 250 moedas com mais volume..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" name="busca-moeda-cripto" data-form-type="other">
+        <input type="search" id="busca" placeholder="Buscar entre as 250 moedas com mais volume..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" name="busca-cripto-1a2b3c" data-form-type="other" data-lpignore="true" data-1p-ignore="true" readonly onfocus="this.removeAttribute('readonly')">
         <div class="lista-moedas" id="listaDisp"><div class="vazio">Carregando moedas...</div></div>
       </div>
       <div>
@@ -183,19 +183,20 @@
         <select id="cartMoeda"><option value="">Selecione...</option></select>
         <label>Quantidade comprada</label>
         <input type="number" id="cartQtd" placeholder="Ex: 0.5" step="any">
+        <label>Data da compra</label>
+        <input type="date" id="cartData">
+        <p style="font-size:11px;color:#6b7280;margin-bottom:8px">Usada para comparar seu desempenho com BTC e ETH no mesmo período.</p>
         <label>Como informar o preço?</label>
         <select id="cartModo" onchange="toggleModoCarteira()">
           <option value="valor">Sei o preço que paguei (por unidade)</option>
-          <option value="data">Sei a data da compra (busco o preço)</option>
+          <option value="data">Não sei o preço — busque pelo dia da compra</option>
         </select>
         <div id="cartValorWrap">
           <label>Preço pago por unidade (USD)</label>
           <input type="number" id="cartPreco" placeholder="Ex: 45000" step="any">
         </div>
         <div id="cartDataWrap" style="display:none">
-          <label>Data da compra</label>
-          <input type="date" id="cartData">
-          <p style="font-size:11px;color:#6b7280;margin-bottom:8px">Vou buscar o preço de fechamento desse dia no histórico.</p>
+          <p style="font-size:11px;color:#6b7280;margin-bottom:8px">Vou buscar o preço de fechamento da data acima no histórico.</p>
         </div>
         <button class="btn btn-primary" onclick="addPosicao()" style="margin-top:8px;width:100%">Adicionar à carteira</button>
         <p id="cartResultado" style="font-size:12px;margin-top:10px"></p>
@@ -436,10 +437,8 @@ function renderDisp() {
     !config.moedas.find(c => c.id === m.id) &&
     (m.nome.toLowerCase().includes(busca) || m.simbolo.toLowerCase().includes(busca))
   );
-  // com busca digitada, ordena A-Z (mais fácil achar); sem busca, mantém por relevância
-  if (busca.trim()) {
-    filtradas = filtradas.sort((a,b)=>(a.nome||'').localeCompare(b.nome||'','pt-BR'));
-  }
+  // sempre em ordem alfabética por nome (mais fácil achar)
+  filtradas = filtradas.sort((a,b)=>(a.nome||'').localeCompare(b.nome||'','pt-BR'));
   filtradas = filtradas.slice(0, 100);
   const el = document.getElementById('listaDisp');
   if (!filtradas.length) { el.innerHTML = '<div class="vazio">Nenhuma encontrada</div>'; return; }
@@ -657,8 +656,11 @@ async function removerAlerta(id, alertaId){
 // ---------- GRÁFICO + FIBONACCI ----------
 function popularSelectGrafico(){
   const sel = document.getElementById('selMoedaGrafico');
+  // todas as moedas (não só as monitoradas), em ordem A-Z, p/ analisar qualquer uma
+  const todas = (moedasDisp.length ? [...moedasDisp] : [...config.moedas])
+    .sort((a,b)=>(a.nome||'').localeCompare(b.nome||'','pt-BR'));
   sel.innerHTML = '<option value="">Selecione uma moeda</option>' +
-    config.moedas.map(m=>`<option value="${m.id}">${m.nome} (${m.simbolo})</option>`).join('');
+    todas.map(m=>`<option value="${m.id}">${m.nome} (${m.simbolo})</option>`).join('');
 }
 document.getElementById('selMoedaGrafico').onchange = e => { if(e.target.value) carregarGrafico(e.target.value); };
 document.querySelectorAll('#periodos .periodo-btn').forEach(b=>{
@@ -708,8 +710,34 @@ async function carregarGrafico(id){
     }
   });
 
-  // tabela Fibonacci + análise
+  // ---- VEREDITO da moeda (tendência atual pelos indicadores) ----
   let html = '';
+  const v = r.analise?.veredito;
+  if (v) {
+    const corV = v.cor === 'compra' ? '#3ddc84' : (v.cor === 'venda' ? '#ff6b7a' : '#d4c373');
+    const fmtP = (x) => x!=null ? ('$'+Number(x).toLocaleString('en-US',{maximumFractionDigits:6})) : '-';
+    const fmtPct = (x) => x==null ? '-' : (x>=0?'+':'')+x.toFixed(1)+'%';
+    html += `<div class="panel" style="margin-top:16px;border:1px solid ${corV}55">
+      <h2>🎯 Tendência atual da ${r.analise.nome||''} pelos indicadores</h2>
+      <div style="font-size:24px;font-weight:800;color:${corV};margin:4px 0">${v.acao}</div>
+      <div style="font-size:13px;color:#c7ccd6;margin-bottom:10px">${v.resumo} <span style="color:#9aa3b2">(Score ${r.analise.score}/100)</span></div>
+      <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:13px">
+        <div style="background:${corV}11;border-radius:8px;padding:8px 12px">
+          <div style="color:#9aa3b2;font-size:11px">POTENCIAL DE ALTA (até a resistência)</div>
+          <b style="color:#3ddc84;font-size:16px">${fmtPct(v.distResistenciaPct)}</b>
+          <span style="color:#9aa3b2"> → ${fmtP(v.resistencia)}</span>
+        </div>
+        <div style="background:#ff6b7a11;border-radius:8px;padding:8px 12px">
+          <div style="color:#9aa3b2;font-size:11px">RISCO DE BAIXA (até o suporte)</div>
+          <b style="color:#ff6b7a;font-size:16px">${fmtPct(v.distSuportePct)}</b>
+          <span style="color:#9aa3b2"> → ${fmtP(v.suporte)}</span>
+        </div>
+      </div>
+      <div class="disclaimer" style="margin-top:12px">⚠️ Leitura dos indicadores do passado — não é garantia. Os alvos são níveis onde o preço já reagiu antes. Para ver a taxa de acerto real desta moeda, use o backtest abaixo.</div>
+    </div>`;
+  }
+
+  // ---- tabela Fibonacci ----
   if (fib) {
     html += `<div class="panel" style="margin-top:16px">
       <h2>🔢 Níveis de Fibonacci (${fib.tendenciaAlta?'movimento de alta':'movimento de baixa'})</h2>
@@ -719,16 +747,9 @@ async function carregarGrafico(id){
           const ehZona = fib.zona && fib.zona.includes(n);
           return `<tr class="${ehZona?'fib-zona':''}"><td class="nivel">${n}</td><td class="preco-fib">$${v.toLocaleString('en-US',{maximumFractionDigits:6})}</td></tr>`;
         }).join('')}
-      </table>`;
-    if (r.analise) {
-      html += `<div style="margin-top:16px;display:flex;align-items:center;gap:12px">
-        <span class="badge ${r.analise.perfil.toLowerCase()}">${r.analise.perfil} — Score ${r.analise.score}/100</span>
-      </div>
-      <div class="disclaimer">⚠️ <b>${r.analise.recomendacao}</b></div>`;
-    }
-    html += `</div>`;
+      </table></div>`;
   } else {
-    html = '<div class="disclaimer" style="margin-top:16px">Dados insuficientes para calcular Fibonacci neste período. Tente um período maior.</div>';
+    html += '<div class="disclaimer" style="margin-top:16px">Dados insuficientes para calcular Fibonacci neste período. Tente um período maior (30 ou 90 dias).</div>';
   }
   document.getElementById('fibContainer').innerHTML = html;
 
@@ -840,6 +861,9 @@ async function addPosicao(){
 
   if(!moedaId || !qtd){ res.textContent='Selecione a moeda e a quantidade.'; res.style.color='#ff6b7a'; return; }
 
+  const data = document.getElementById('cartData').value;
+  if(!data){ res.textContent='Informe a data da compra (necessária para comparar com BTC/ETH).'; res.style.color='#ff6b7a'; return; }
+
   const body = {
     moedaId,
     nome: opt.dataset.nome,
@@ -847,15 +871,12 @@ async function addPosicao(){
     imagem: opt.dataset.img,
     quantidade: qtd,
     modo,
+    dataCompra: new Date(data).toISOString(),
   };
   if(modo==='valor'){
     const preco = document.getElementById('cartPreco').value;
     if(!preco){ res.textContent='Informe o preço pago.'; res.style.color='#ff6b7a'; return; }
     body.precoCompra = preco;
-  } else {
-    const data = document.getElementById('cartData').value;
-    if(!data){ res.textContent='Informe a data da compra.'; res.style.color='#ff6b7a'; return; }
-    body.dataCompra = new Date(data).toISOString();
   }
 
   res.textContent = 'Processando...'; res.style.color='#9aa3b2';
@@ -1017,21 +1038,37 @@ async function carregarOportunidades(){
     const r = await (await fetch(API+'/api/oportunidades')).json();
     if (r.erro) { prog.textContent = '⚠️ ' + r.erro; lista.innerHTML=''; }
     else {
-      prog.textContent = r.cacheado ? 'Resultado recente (atualiza a cada 30 min).' : '✅ Ranking atualizado.';
       const fmtP = (x) => x!=null ? ('$'+Number(x).toLocaleString('en-US',{maximumFractionDigits:6})) : '-';
-      if (!r.oportunidades.length) { lista.innerHTML = '<div class="vazio">Nenhuma oportunidade clara no momento.</div>'; }
-      else {
-        lista.innerHTML = r.oportunidades.map((o,i)=>{
-          const corA = o.acao==='COMPRAR'?'#3ddc84':(o.acao==='VENDER'?'#ff6b7a':'#d4c373');
+      const fmtPct = (x) => x==null ? '-' : (x>=0?'+':'')+x.toFixed(1)+'%';
+      const b = r.benchmark || {};
+      // cabeçalho com o benchmark BTC/ETH (a régua que as moedas têm que bater)
+      let cabecalho = `<div style="background:#10141c;border:1px solid #262b38;border-radius:10px;padding:12px;margin-bottom:14px;font-size:12px;color:#c7ccd6">
+        <b style="color:#7c9eff">📏 Régua do mercado (7 dias)</b> — só aparecem moedas batendo as duas:<br>
+        Bitcoin: <b style="color:${(b.btc7||0)>=0?'#3ddc84':'#ff6b7a'}">${fmtPct(b.btc7)}</b> &nbsp;·&nbsp;
+        Ethereum: <b style="color:${(b.eth7||0)>=0?'#3ddc84':'#ff6b7a'}">${fmtPct(b.eth7)}</b>
+        <div style="color:#9aa3b2;margin-top:6px">${r.horizonteTexto||''}</div>
+      </div>`;
+      prog.textContent = r.cacheado ? 'Resultado recente (atualiza a cada 30 min).' : '✅ Ranking atualizado.';
+      if (!r.oportunidades.length) {
+        lista.innerHTML = cabecalho + '<div class="vazio">Nenhuma moeda está batendo BTC e ETH com sinal de compra agora. Isso é normal em mercado fraco — melhor esperar.</div>';
+      } else {
+        lista.innerHTML = cabecalho + r.oportunidades.map((o,i)=>{
+          const corUp = (o.upsidePct||0) >= 0 ? '#3ddc84' : '#ff6b7a';
           return `<div style="background:#161a23;border:1px solid #262b38;border-radius:10px;padding:14px;margin-bottom:10px">
             <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
               <div><b style="font-size:15px">#${i+1} ${o.nome}</b> <span style="color:#6b7280">${o.simbolo}</span></div>
-              <span class="badge" style="background:${corA}22;color:${corA}">${o.acao} · Score ${o.score}/100</span>
+              <span class="badge" style="background:#3ddc8422;color:#3ddc84">${o.acao} · Score ${o.score}/100</span>
+            </div>
+            <div style="background:#3ddc8411;border-radius:8px;padding:8px 10px;margin-top:8px;font-size:13px">
+              <span style="color:#9aa3b2">Potencial de alta (até a resistência):</span>
+              <b style="color:${corUp};font-size:15px"> ${fmtPct(o.upsidePct)}</b>
+              <span style="color:#9aa3b2"> → pode chegar a <b style="color:${corUp}">${fmtP(o.resistencia)}</b></span>
             </div>
             <div style="display:flex;gap:18px;margin-top:8px;flex-wrap:wrap;font-size:12px">
               <div><span style="color:#9aa3b2">Preço:</span> <b>${fmtP(o.preco)}</b></div>
-              <div><span style="color:#9aa3b2">Resistência:</span> <b style="color:#3ddc84">${fmtP(o.resistencia)}</b> <span style="color:#3ddc84">(${o.distResistenciaPct>=0?'+':''}${o.distResistenciaPct?.toFixed(1)}%)</span></div>
-              <div><span style="color:#9aa3b2">Suporte:</span> <b style="color:#ff6b7a">${fmtP(o.suporte)}</b> <span style="color:#ff6b7a">(${o.distSuportePct?.toFixed(1)}%)</span></div>
+              <div><span style="color:#9aa3b2">Risco até o suporte:</span> <b style="color:#ff6b7a">${fmtPct(o.downsidePct)}</b></div>
+              <div><span style="color:#9aa3b2">7d:</span> <b style="color:${(o.retorno7d||0)>=0?'#3ddc84':'#ff6b7a'}">${fmtPct(o.retorno7d)}</b></div>
+              <div><span style="color:#9aa3b2">30d:</span> <b style="color:${(o.retorno30d||0)>=0?'#3ddc84':'#ff6b7a'}">${fmtPct(o.retorno30d)}</b></div>
             </div>
           </div>`;
         }).join('');
