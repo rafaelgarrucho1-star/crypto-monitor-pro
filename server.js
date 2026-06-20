@@ -644,10 +644,11 @@ async function cicloMonitoramento() {
       tvl: tvl ?? null,
     };
 
-    // Atualiza análise técnica (busca histórico 30d p/ ter dados suficientes)
+    // Atualiza análise técnica (busca 90d p/ ter pontos suficientes — moedas
+    // como AERO têm dados diários e 30d daria só ~30 pontos, insuficiente)
     try {
-      const hist = await buscarHistorico(moeda.id, 30);
-      if (hist.length >= 50) {
+      const hist = await buscarHistorico(moeda.id, 90);
+      if (hist.length >= 40) {
         const precosArr = hist.map((h) => h.preco);
         const resultado = analise.scoreConsolidado(precosArr);
 
@@ -845,14 +846,21 @@ app.get('/api/dados/:id', (req, res) => {
 
 app.get('/api/historico-grafico/:id', async (req, res) => {
   const dias = parseInt(req.query.dias) || 7;
-  const hist = await buscarHistorico(req.params.id, dias);
+  const hist = await buscarHistorico(req.params.id, dias); // série do gráfico (período escolhido)
+  // análise/veredito SEMPRE com 90 dias, pra ter indicadores confiáveis
+  // mesmo quando o gráfico mostra 1/7/30 dias
   let analiseResult = null;
-  if (hist.length >= 50) {
-    analiseResult = analise.scoreConsolidado(hist.map((h) => h.preco));
-    // anexa o nome da moeda (útil pro título da análise no front)
+  const histAnalise = dias >= 90 ? hist : await buscarHistorico(req.params.id, 90);
+  if (histAnalise.length >= 40) {
+    analiseResult = analise.scoreConsolidado(histAnalise.map((h) => h.preco));
     const lista = await buscarListaMoedas();
     const info = lista.find((m) => m.id === req.params.id);
     if (info) analiseResult.nome = info.nome;
+    // anexa a taxa histórica real desta moeda (backtest 180d), se já calculada
+    if (cacheTaxaHist[req.params.id]) {
+      analiseResult.taxaHistorica = cacheTaxaHist[req.params.id].taxa;
+      analiseResult.taxaSinais = cacheTaxaHist[req.params.id].sinais;
+    }
   }
   res.json({ historico: hist, analise: analiseResult });
 });
@@ -1442,8 +1450,8 @@ app.get('/api/oportunidades', async (req, res) => {
       await new Promise((r) => setTimeout(r, 150));
     }
 
-    // ranqueia por score, desempate pelo maior upside
-    candidatas.sort((a, b) => (b.score - a.score) || ((b.upsidePct||0) - (a.upsidePct||0)));
+    // ranqueia pelo MAIOR upside (potencial até a resistência); desempate por score
+    candidatas.sort((a, b) => ((b.upsidePct||0) - (a.upsidePct||0)) || (b.score - a.score));
     const top = candidatas.slice(0, 10);
 
     const payload = {

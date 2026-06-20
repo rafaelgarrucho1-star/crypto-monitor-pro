@@ -733,7 +733,12 @@ async function carregarGrafico(id){
           <span style="color:#9aa3b2"> → ${fmtP(v.suporte)}</span>
         </div>
       </div>
-      <div class="disclaimer" style="margin-top:12px">⚠️ Leitura dos indicadores do passado — não é garantia. Os alvos são níveis onde o preço já reagiu antes. Para ver a taxa de acerto real desta moeda, use o backtest abaixo.</div>
+      ${r.analise.taxaHistorica!=null
+        ? `<div style="background:#101a2a;border:1px solid #2c4a7c;border-radius:8px;padding:10px 12px;margin-top:12px;font-size:13px;color:#9ec5ff">
+             📊 <b>Backtest desta moeda:</b> quando ela deu sinais parecidos nos últimos 180 dias, acertou a direção <b>${r.analise.taxaHistorica.toFixed(0)}%</b> das vezes (${r.analise.taxaSinais||0} sinais, conferidos 7 dias depois).
+           </div>`
+        : `<div style="font-size:12px;color:#9aa3b2;margin-top:10px">A taxa de acerto real desta moeda aparece após o backtest rodar (toque no botão abaixo, ou aguarde o monitoramento processá-la).</div>`}
+      <div class="disclaimer" style="margin-top:12px">⚠️ Leitura dos indicadores do passado — não é garantia. Os alvos são níveis onde o preço já reagiu antes.</div>
     </div>`;
   }
 
@@ -920,13 +925,15 @@ async function carregarCarteira(){
     const destaque = ehVoce?'font-weight:700;color:#7c9eff':'';
     return `<div class="bench-linha" style="${destaque}"><span>${nome}</span><span style="color:${cor}">${valor>=0?'+':''}${valor.toFixed(2)}%</span></div>`;
   }
-  // veredito vs benchmark
+  // veredito vs benchmark — mostra os dois números pra ficar claro de onde vem a diferença
   let veredito = '';
   if(b.bitcoin!=null){
     const dif = b.suaCarteira - b.bitcoin;
+    const voce = (b.suaCarteira>=0?'+':'')+b.suaCarteira.toFixed(2)+'%';
+    const btc = (b.bitcoin>=0?'+':'')+b.bitcoin.toFixed(2)+'%';
     veredito = dif>=0
-      ? `Sua carteira está <b style="color:#3ddc84">ganhando do Bitcoin</b> por ${dif.toFixed(2)} pontos percentuais no período. 👏`
-      : `Sua carteira está <b style="color:#ff6b7a">perdendo para o Bitcoin</b> por ${Math.abs(dif).toFixed(2)} pontos percentuais. Comprar e segurar BTC teria rendido mais até aqui.`;
+      ? `Você está <b style="color:#3ddc84">à frente do Bitcoin</b>: sua carteira fez <b>${voce}</b> e o Bitcoin fez <b>${btc}</b> no mesmo período (diferença de ${dif.toFixed(2)} a seu favor).`
+      : `Você está <b style="color:#ff6b7a">atrás do Bitcoin</b>: sua carteira fez <b>${voce}</b> e o Bitcoin fez <b>${btc}</b> no mesmo período. Comprar e segurar BTC teria rendido mais até aqui.`;
   }
 
   resumoEl.innerHTML = `
@@ -965,6 +972,7 @@ async function carregarCarteira(){
         </div>
         <div class="indicadores">
           <div class="ind"><div class="lbl">Investido</div><div class="val">$${p.valorInvestido.toLocaleString('en-US',{maximumFractionDigits:2})}</div></div>
+          <div class="ind"><div class="lbl">Preço de compra</div><div class="val">$${p.precoCompra.toLocaleString('en-US',{maximumFractionDigits:6})}</div></div>
           <div class="ind"><div class="lbl">Preço atual</div><div class="val">$${p.precoAtual.toLocaleString('en-US',{maximumFractionDigits:6})}</div></div>
           <div class="ind"><div class="lbl">Valor atual</div><div class="val">$${p.valorAtual.toLocaleString('en-US',{maximumFractionDigits:2})}</div></div>
           <div class="ind"><div class="lbl">Resultado</div><div class="val" style="color:${cor}">${st} ${p.lucroPct>=0?'+':''}${p.lucroPct.toFixed(2)}%</div></div>
@@ -1041,12 +1049,12 @@ async function carregarOportunidades(){
       const fmtP = (x) => x!=null ? ('$'+Number(x).toLocaleString('en-US',{maximumFractionDigits:6})) : '-';
       const fmtPct = (x) => x==null ? '-' : (x>=0?'+':'')+x.toFixed(1)+'%';
       const b = r.benchmark || {};
-      // cabeçalho com o benchmark BTC/ETH (a régua que as moedas têm que bater)
+      // cabeçalho com o benchmark BTC/ETH (desempenho JÁ ACONTECIDO nos últimos 7 dias)
       let cabecalho = `<div style="background:#10141c;border:1px solid #262b38;border-radius:10px;padding:12px;margin-bottom:14px;font-size:12px;color:#c7ccd6">
-        <b style="color:#7c9eff">📏 Régua do mercado (7 dias)</b> — só aparecem moedas batendo as duas:<br>
+        <b style="color:#7c9eff">📏 Desempenho dos últimos 7 dias (já aconteceu — não é previsão)</b><br>
         Bitcoin: <b style="color:${(b.btc7||0)>=0?'#3ddc84':'#ff6b7a'}">${fmtPct(b.btc7)}</b> &nbsp;·&nbsp;
         Ethereum: <b style="color:${(b.eth7||0)>=0?'#3ddc84':'#ff6b7a'}">${fmtPct(b.eth7)}</b>
-        <div style="color:#9aa3b2;margin-top:6px">${r.horizonteTexto||''}</div>
+        <div style="color:#9aa3b2;margin-top:6px">Só entram moedas que <b>subiram mais que BTC e ETH nesses 7 dias</b> (força relativa) e ainda têm espaço até a resistência. Ranqueadas pelo maior potencial de alta. ${r.horizonteTexto||''}</div>
       </div>`;
       prog.textContent = r.cacheado ? 'Resultado recente (atualiza a cada 30 min).' : '✅ Ranking atualizado.';
       if (!r.oportunidades.length) {
@@ -1067,7 +1075,7 @@ async function carregarOportunidades(){
             <div style="display:flex;gap:18px;margin-top:8px;flex-wrap:wrap;font-size:12px">
               <div><span style="color:#9aa3b2">Preço:</span> <b>${fmtP(o.preco)}</b></div>
               <div><span style="color:#9aa3b2">Risco até o suporte:</span> <b style="color:#ff6b7a">${fmtPct(o.downsidePct)}</b></div>
-              <div><span style="color:#9aa3b2">7d:</span> <b style="color:${(o.retorno7d||0)>=0?'#3ddc84':'#ff6b7a'}">${fmtPct(o.retorno7d)}</b></div>
+              <div><span style="color:#9aa3b2">Subiu em 7d (bateu o mercado):</span> <b style="color:${(o.retorno7d||0)>=0?'#3ddc84':'#ff6b7a'}">${fmtPct(o.retorno7d)}</b></div>
               <div><span style="color:#9aa3b2">30d:</span> <b style="color:${(o.retorno30d||0)>=0?'#3ddc84':'#ff6b7a'}">${fmtPct(o.retorno30d)}</b></div>
             </div>
           </div>`;
