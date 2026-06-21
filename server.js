@@ -650,7 +650,7 @@ async function cicloMonitoramento() {
       const hist = await buscarHistorico(moeda.id, 90);
       if (hist.length >= 40) {
         const precosArr = hist.map((h) => h.preco);
-        const resultado = analise.scoreConsolidado(precosArr);
+        const resultado = analise.scoreConsolidado(precosArr, dados.usd);
 
         // TAXA HISTÓRICA: backtest 180d, cacheado 6h por moeda (é pesado)
         let taxaHistorica = cacheTaxaHist[moeda.id]?.taxa ?? null;
@@ -852,7 +852,8 @@ app.get('/api/historico-grafico/:id', async (req, res) => {
   let analiseResult = null;
   const histAnalise = dias >= 90 ? hist : await buscarHistorico(req.params.id, 90);
   if (histAnalise.length >= 40) {
-    analiseResult = analise.scoreConsolidado(histAnalise.map((h) => h.preco));
+    const precoVivo = precosAtuais[req.params.id]?.preco ?? null;
+    analiseResult = analise.scoreConsolidado(histAnalise.map((h) => h.preco), precoVivo);
     const lista = await buscarListaMoedas();
     const info = lista.find((m) => m.id === req.params.id);
     if (info) analiseResult.nome = info.nome;
@@ -1389,21 +1390,24 @@ app.get('/api/oportunidades', async (req, res) => {
   try {
     const lista = await buscarListaMoedas();
 
-    // ---- Benchmark BTC e ETH (força relativa) ----
+    // ---- SETUP ATUAL do BTC e ETH (não o passado): roda a mesma análise
+    // neles agora e pega o score de compra. A régua passa a ser "setup
+    // mais forte que BTC/ETH AGORA", não "já subiu mais que eles". ----
     const idBTC = mapaSimboloParaId['BTC'] || 'bitcoin';
     const idETH = mapaSimboloParaId['ETH'] || 'ethereum';
-    async function retornosDe(id) {
+    async function setupDe(id) {
       try {
         const h = await buscarHistorico(id, 90);
         const p = h.map((x) => x.preco);
-        return { r7: retornoNDias(p, 7), r30: retornoNDias(p, 30) };
-      } catch { return { r7: null, r30: null }; }
+        if (p.length < 50) return { score: 50, r7: null, acao: 'ESPERAR' };
+        const r = analise.scoreConsolidado(p, p[p.length - 1]);
+        return { score: r.score, acao: r.veredito?.acao, r7: retornoNDias(p, 7) };
+      } catch { return { score: 50, r7: null, acao: 'ESPERAR' }; }
     }
-    const btc = await retornosDe(idBTC);
-    const eth = await retornosDe(idETH);
-    // referência a bater: o MAIOR entre BTC e ETH em cada janela (mais exigente)
-    const refBaixa7 = Math.max(btc.r7 ?? -999, eth.r7 ?? -999);
-    const refBaixa30 = Math.max(btc.r30 ?? -999, eth.r30 ?? -999);
+    const btc = await setupDe(idBTC);
+    const eth = await setupDe(idETH);
+    // a moeda precisa ter setup de compra MAIS forte que os dois
+    const refScore = Math.max(btc.score, eth.score);
 
     // ---- Candidatas: top 40 por volume + monitoradas ----
     const idsAlvo = [...new Set([
@@ -1422,24 +1426,26 @@ app.get('/api/oportunidades', async (req, res) => {
         // pula stablecoins
         if (ehStablecoin(info.simbolo, precosArr)) continue;
 
-        const r = analise.scoreConsolidado(precosArr);
+        const r = analise.scoreConsolidado(precosArr, precosArr[precosArr.length - 1]);
         const v = r.veredito || {};
         const r7 = retornoNDias(precosArr, 7);
         const r30 = retornoNDias(precosArr, 30);
 
-        // FILTROS: precisa ser sinal de compra, ter upside real,
-        // e estar batendo BTC e ETH (força relativa) no período de 7 dias.
-        const ehCompra = v.acao === 'COMPRAR' || r.score >= 60;
+        // FILTROS (olhando o SETUP ATUAL, não o passado):
+        //  - sinal de COMPRA (indicadores apontam pra cima + tendência de alta)
+        //  - setup mais forte que BTC e ETH agora (score maior que os dois)
+        //  - tem espaço real até a resistência (potencial de alta)
+        const ehCompra = v.acao === 'COMPRAR';
+        const maisForteQueMercado = r.score > refScore;
         const temUpside = (v.distResistenciaPct ?? -1) > 0.5;
-        const batemMercado = (r7 ?? -999) > refBaixa7;
-        if (!ehCompra || !temUpside || !batemMercado) continue;
+        if (!ehCompra || !maisForteQueMercado || !temUpside) continue;
 
         candidatas.push({
           id, nome: info.nome || id, simbolo: info.simbolo || '',
           preco: precosArr[precosArr.length - 1],
           score: r.score,
           acao: v.acao || r.perfil,
-          upsidePct: v.distResistenciaPct,     // % até a resistência (potencial de alta)
+          upsidePct: v.distResistenciaPct,     // % até a resistência (alvo de alta)
           resistencia: v.resistencia,
           downsidePct: v.distSuportePct,        // % até o suporte (risco de baixa)
           suporte: v.suporte,
@@ -1456,8 +1462,8 @@ app.get('/api/oportunidades', async (req, res) => {
 
     const payload = {
       oportunidades: top,
-      benchmark: { btc7: btc.r7, btc30: btc.r30, eth7: eth.r7, eth30: eth.r30 },
-      horizonteTexto: 'Leitura dos últimos 90 dias. A taxa histórica testa 7 dias à frente. Atualiza a cada 30 min.',
+      benchmark: { btcScore: btc.score, ethScore: eth.score, btcAcao: btc.acao, ethAcao: eth.acao },
+      horizonteTexto: 'Compara o setup técnico ATUAL (não o passado). A taxa histórica de cada moeda testa 7 dias à frente. Atualiza a cada 30 min.',
     };
     cacheOportunidades = { ts: Date.now(), payload };
     res.json({ ...payload, cacheado: false });

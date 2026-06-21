@@ -514,23 +514,32 @@ async function renderMonitoradas() {
         </div>
         <div style="color:#cdd3dd;font-size:13px;margin-top:6px">${v.resumo}</div>
         <div style="color:#9aa3b2;font-size:12px;margin-top:6px">${taxaTxt}</div>`;
-      // alvos técnicos reais
-      if (v.resistencia && v.suporte) {
-        html += `
-        <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap">
-          <div style="flex:1;min-width:120px;background:rgba(61,220,132,0.08);border-radius:8px;padding:8px">
+      // alvos técnicos reais (cada lado pode estar "rompido")
+      const blocoResist = v.resistencia != null
+        ? `<div style="flex:1;min-width:120px;background:rgba(61,220,132,0.08);border-radius:8px;padding:8px">
             <div style="font-size:11px;color:#9aa3b2">RESISTÊNCIA (alvo se subir)</div>
             <div style="font-size:15px;font-weight:700;color:#3ddc84">$${v.resistencia.toLocaleString('en-US',{maximumFractionDigits:6})}</div>
             <div style="font-size:12px;color:#3ddc84">+${v.distResistenciaPct.toFixed(1)}%</div>
-          </div>
-          <div style="flex:1;min-width:120px;background:rgba(255,107,122,0.08);border-radius:8px;padding:8px">
+          </div>`
+        : `<div style="flex:1;min-width:120px;background:rgba(61,220,132,0.08);border-radius:8px;padding:8px">
+            <div style="font-size:11px;color:#9aa3b2">RESISTÊNCIA</div>
+            <div style="font-size:13px;font-weight:700;color:#3ddc84">Novo topo do período</div>
+            <div style="font-size:11px;color:#9aa3b2">preço acima de toda resistência recente</div>
+          </div>`;
+      const blocoSup = v.suporte != null
+        ? `<div style="flex:1;min-width:120px;background:rgba(255,107,122,0.08);border-radius:8px;padding:8px">
             <div style="font-size:11px;color:#9aa3b2">SUPORTE (alvo se cair)</div>
             <div style="font-size:15px;font-weight:700;color:#ff6b7a">$${v.suporte.toLocaleString('en-US',{maximumFractionDigits:6})}</div>
             <div style="font-size:12px;color:#ff6b7a">${v.distSuportePct.toFixed(1)}%</div>
-          </div>
-        </div>
+          </div>`
+        : `<div style="flex:1;min-width:120px;background:rgba(255,107,122,0.08);border-radius:8px;padding:8px">
+            <div style="font-size:11px;color:#9aa3b2">SUPORTE</div>
+            <div style="font-size:13px;font-weight:700;color:#ff6b7a">Novo fundo do período</div>
+            <div style="font-size:11px;color:#9aa3b2">preço abaixo de todo suporte recente</div>
+          </div>`;
+      html += `
+        <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap">${blocoResist}${blocoSup}</div>
         <div style="font-size:11px;color:#6b7280;margin-top:8px">Resistência e suporte são níveis onde o preço já reagiu antes — alvos técnicos reais, não previsão. O preço pode rompê-los nos dois sentidos.</div>`;
-      }
       html += `</div>`;
 
       html += `<div class="indicadores">
@@ -550,37 +559,7 @@ async function renderMonitoradas() {
           ${p.supply ? `<div class="ind"><div class="lbl">Supply</div><div class="val" style="font-size:12px">${Number(p.supply).toLocaleString('en-US',{maximumFractionDigits:0,notation:'compact'})}</div></div>` : ''}
         </div>`;
       }
-      html += `
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <span class="badge ${a.perfil.toLowerCase()}">${a.perfil} — Score ${a.score}/100</span>
-      </div>
-      <div class="score-bar"><div class="score-fill" style="width:${a.score}%;background:${corScore}"></div></div>`;
-
-      // ----- VEREDITO ÚNICO (decisão clara + alvos técnicos reais) -----
-      if (a.veredito) {
-        const v = a.veredito;
-        const corV = v.cor === 'compra' ? '#3ddc84' : (v.cor === 'venda' ? '#ff6b7a' : '#d4c373');
-        const taxaTxt = (a.taxaHistorica != null)
-          ? `Quando esta moeda deu sinais parecidos no passado, acertou a direção <b>${a.taxaHistorica.toFixed(0)}%</b> das vezes (${a.taxaSinais||0} sinais, 180 dias).`
-          : `Taxa histórica: toque em "Rodar backtest" na aba Gráficos para medir.`;
-        const fmtP = (x) => x != null ? ('$' + Number(x).toLocaleString('en-US',{maximumFractionDigits:6})) : '-';
-        html += `
-        <div class="veredito" style="border:1px solid ${corV}55;background:${corV}11;border-radius:10px;padding:14px;margin:10px 0">
-          <div style="font-size:20px;font-weight:800;color:${corV}">${v.acao}</div>
-          <div style="font-size:13px;color:#c7ccd6;margin:4px 0 10px">${v.resumo}</div>
-          <div style="font-size:12px;color:#9aa3b2;line-height:1.5">${taxaTxt}</div>
-          <div style="display:flex;gap:16px;margin-top:10px;flex-wrap:wrap">
-            <div style="font-size:12px"><span style="color:#9aa3b2">Resistência (alvo se subir):</span>
-              <b style="color:#3ddc84">${fmtP(v.resistencia)}</b>
-              <span style="color:#3ddc84">(${v.distResistenciaPct>=0?'+':''}${v.distResistenciaPct?.toFixed(1)}%)</span></div>
-            <div style="font-size:12px"><span style="color:#9aa3b2">Suporte (alvo se cair):</span>
-              <b style="color:#ff6b7a">${fmtP(v.suporte)}</b>
-              <span style="color:#ff6b7a">(${v.distSuportePct?.toFixed(1)}%)</span></div>
-          </div>
-        </div>`;
-      }
-
-      // sinais detalhados — agora recolhíveis (o "porquê" da decisão)
+      // sinais detalhados — recolhíveis (o "porquê" da decisão)
       html += `
       <details style="margin-top:6px">
         <summary style="cursor:pointer;color:#7c9eff;font-size:13px">Ver os indicadores que levaram a essa decisão</summary>
@@ -724,13 +703,15 @@ async function carregarGrafico(id){
       <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:13px">
         <div style="background:${corV}11;border-radius:8px;padding:8px 12px">
           <div style="color:#9aa3b2;font-size:11px">POTENCIAL DE ALTA (até a resistência)</div>
-          <b style="color:#3ddc84;font-size:16px">${fmtPct(v.distResistenciaPct)}</b>
-          <span style="color:#9aa3b2"> → ${fmtP(v.resistencia)}</span>
+          ${v.resistencia!=null
+            ? `<b style="color:#3ddc84;font-size:16px">${fmtPct(v.distResistenciaPct)}</b><span style="color:#9aa3b2"> → ${fmtP(v.resistencia)}</span>`
+            : `<b style="color:#3ddc84;font-size:14px">Novo topo do período</b><div style="color:#9aa3b2;font-size:11px">preço acima de toda resistência recente</div>`}
         </div>
         <div style="background:#ff6b7a11;border-radius:8px;padding:8px 12px">
           <div style="color:#9aa3b2;font-size:11px">RISCO DE BAIXA (até o suporte)</div>
-          <b style="color:#ff6b7a;font-size:16px">${fmtPct(v.distSuportePct)}</b>
-          <span style="color:#9aa3b2"> → ${fmtP(v.suporte)}</span>
+          ${v.suporte!=null
+            ? `<b style="color:#ff6b7a;font-size:16px">${fmtPct(v.distSuportePct)}</b><span style="color:#9aa3b2"> → ${fmtP(v.suporte)}</span>`
+            : `<b style="color:#ff6b7a;font-size:14px">Novo fundo do período</b><div style="color:#9aa3b2;font-size:11px">preço abaixo de todo suporte recente</div>`}
         </div>
       </div>
       ${r.analise.taxaHistorica!=null
@@ -792,7 +773,7 @@ async function rodarBacktestAgregado(){
         <div style="margin-top:10px">
           ${r.porMoeda.map(m=>`<div class="bench-linha"><span>${m.id}</span><span style="color:${m.taxa>=60?'#3ddc84':m.taxa>=50?'#d4c373':'#ff6b7a'}">${m.taxa.toFixed(1)}% (${m.sinais} sinais)</span></div>`).join('')}
         </div>
-        <div class="disclaimer" style="margin-top:12px">📌 Mesmo com ~65-70% de acerto médio, isso <b>não é garantia de lucro</b>: um acerto pequeno e um erro grande podem dar prejuízo. Gestão de risco e tamanho de posição importam tanto quanto acertar a direção.</div>
+        <div class="disclaimer" style="margin-top:12px">📌 Prever a direção do mercado no curto prazo é genuinamente difícil — nenhum sistema técnico acerta de forma confiável muito acima de 55-60%. Um acerto pequeno e um erro grande ainda dão prejuízo. Gestão de risco e tamanho de posição importam tanto quanto acertar a direção.</div>
       </div>`;
   } catch(e){
     el.innerHTML = '<div class="disclaimer">Erro ao rodar backtest agregado. Tente novamente.</div>';
@@ -1049,12 +1030,13 @@ async function carregarOportunidades(){
       const fmtP = (x) => x!=null ? ('$'+Number(x).toLocaleString('en-US',{maximumFractionDigits:6})) : '-';
       const fmtPct = (x) => x==null ? '-' : (x>=0?'+':'')+x.toFixed(1)+'%';
       const b = r.benchmark || {};
-      // cabeçalho com o benchmark BTC/ETH (desempenho JÁ ACONTECIDO nos últimos 7 dias)
+      // cabeçalho: compara o SETUP ATUAL (não o passado) com BTC e ETH
       let cabecalho = `<div style="background:#10141c;border:1px solid #262b38;border-radius:10px;padding:12px;margin-bottom:14px;font-size:12px;color:#c7ccd6">
-        <b style="color:#7c9eff">📏 Desempenho dos últimos 7 dias (já aconteceu — não é previsão)</b><br>
-        Bitcoin: <b style="color:${(b.btc7||0)>=0?'#3ddc84':'#ff6b7a'}">${fmtPct(b.btc7)}</b> &nbsp;·&nbsp;
-        Ethereum: <b style="color:${(b.eth7||0)>=0?'#3ddc84':'#ff6b7a'}">${fmtPct(b.eth7)}</b>
-        <div style="color:#9aa3b2;margin-top:6px">Só entram moedas que <b>subiram mais que BTC e ETH nesses 7 dias</b> (força relativa) e ainda têm espaço até a resistência. Ranqueadas pelo maior potencial de alta. ${r.horizonteTexto||''}</div>
+        <b style="color:#7c9eff">📐 Força do setup AGORA (não é o que já subiu)</b><br>
+        Bitcoin: <b>${b.btcScore!=null?b.btcScore+'/100':'-'}</b> (${b.btcAcao||'-'}) &nbsp;·&nbsp;
+        Ethereum: <b>${b.ethScore!=null?b.ethScore+'/100':'-'}</b> (${b.ethAcao||'-'})
+        <div style="color:#9aa3b2;margin-top:6px">Só entram moedas com <b>sinal de COMPRA</b>, <b>tendência de alta</b> e <b>setup mais forte que BTC e ETH neste momento</b>. Ranqueadas pelo maior espaço até a resistência. ${r.horizonteTexto||''}</div>
+        <div style="color:#6b7280;margin-top:6px;font-size:11px">⚠️ Isto NÃO é previsão de quanto vai subir — é a leitura dos indicadores agora. Ninguém projeta preço futuro de forma confiável.</div>
       </div>`;
       prog.textContent = r.cacheado ? 'Resultado recente (atualiza a cada 30 min).' : '✅ Ranking atualizado.';
       if (!r.oportunidades.length) {
@@ -1075,8 +1057,8 @@ async function carregarOportunidades(){
             <div style="display:flex;gap:18px;margin-top:8px;flex-wrap:wrap;font-size:12px">
               <div><span style="color:#9aa3b2">Preço:</span> <b>${fmtP(o.preco)}</b></div>
               <div><span style="color:#9aa3b2">Risco até o suporte:</span> <b style="color:#ff6b7a">${fmtPct(o.downsidePct)}</b></div>
-              <div><span style="color:#9aa3b2">Subiu em 7d (bateu o mercado):</span> <b style="color:${(o.retorno7d||0)>=0?'#3ddc84':'#ff6b7a'}">${fmtPct(o.retorno7d)}</b></div>
-              <div><span style="color:#9aa3b2">30d:</span> <b style="color:${(o.retorno30d||0)>=0?'#3ddc84':'#ff6b7a'}">${fmtPct(o.retorno30d)}</b></div>
+              <div><span style="color:#6b7280">já subiu 7d:</span> <b style="color:${(o.retorno7d||0)>=0?'#3ddc84':'#ff6b7a'}">${fmtPct(o.retorno7d)}</b></div>
+              <div><span style="color:#6b7280">30d:</span> <b style="color:${(o.retorno30d||0)>=0?'#3ddc84':'#ff6b7a'}">${fmtPct(o.retorno30d)}</b></div>
             </div>
           </div>`;
         }).join('');
